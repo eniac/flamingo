@@ -145,6 +145,7 @@ dmypy.json
 
 # Data
 .pem
+/log
 
 # Pyre type checker
 .pyre/
