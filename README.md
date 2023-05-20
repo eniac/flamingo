@@ -1,6 +1,6 @@
-# Flamingo: Secure Aggregation Protocol with ABIDES Framework
+# Flamingo: A Multi-Round Single-Server Secure Aggregation Protocol
 
-Flamingo is a system for secure aggregation built for federated learning settings. 
+Flamingo is a system for secure aggregation built for private federated learning. 
 This implementation accompanies our [paper](https://eprint.iacr.org/2023/486) by Yiping Ma, Jess Woods, Sebastian Angel, Antigoni Polychroniadou and Tal Rabin at Oakland 2023. 
 
 WARNING: This is an academic proof-of-concept prototype and is not production-ready.
@@ -66,6 +66,8 @@ python3 abides.py -c flamingo -n 128 -i 1 -p 1
 If you want to print out info at every agent, add `-d True` to the above command.
 
 ## Additional Information
-The server waiting time is set in `util/param.py` so that the dropout rate is 1%. 
-Specifically, we target a dropout rate (e.g., 1%), and combined with network latency, we set the server waiting time. The server total time = server waiting time + server computation time.
+The server waiting time is set in `util/param.py` according to a target dropout rate (1%).
+Specifically, for a target dropout rate, we set the waiting time according to the network latency (see `model/LatencyModel.py`). For each iteration, server total time = server waiting time + server computation time.
 
+## Acknowledgement
+We thank authors of [MicroFedML](https://eprint.iacr.org/2022/714.pdf) for providing an example template of ABIDES framework.
