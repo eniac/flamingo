@@ -17,6 +17,12 @@ import pandas as pd
 from sys import exit
 from time import time
 
+# ML data and training
+import pmlb
+from pmlb import classification_dataset_names, fetch_data
+from sklearn.preprocessing import StandardScaler
+from sklearn.model_selection import train_test_split
+
 # Some config files require additional command line parameters to easily
 # control agent or simulation hyperparameters during coarse parallelization.
 import argparse
@@ -40,6 +46,14 @@ parser.add_argument('--round_time', type=int, default=10,
                     help='Fixed time the server waits for one round')
 parser.add_argument('-s', '--seed', type=int, default=None,
                     help='numpy.random.seed() for simulation')
+parser.add_argument('-t', '--dataset', default='mnist',
+                    help='Set ML dataset')
+parser.add_argument('-e', '--vector_length', type=int, default=80000,
+                    help='set input vector length')
+parser.add_argument('-x', '--constant', type=int, default=100,
+                    help='Constant +x for encoding')
+parser.add_argument('-y', '--multiplier', type=int, default=16,
+                    help='Multiplier 2^y for encoding')
 parser.add_argument('-v', '--verbose', action='store_true',
                     help='Maximum verbosity!')
 parser.add_argument('-p', '--parallel_mode', type=bool, default=True, 
@@ -78,6 +92,8 @@ skip_log = args.skip_log
 seed = args.seed
 if not seed: seed = int(pd.Timestamp.now().timestamp() * 1000000) % (2**32 - 1)
 np.random.seed(seed)
+
+dataset = args.dataset
 
 # Config parameter that causes util.util.print to suppress most output.
 util.silent_mode = not args.verbose
@@ -163,10 +179,29 @@ secret_scale = 1000000
 #   the data into the structures expected by the PPFL clients.  For example:
 #   X_train, X_test, y_train, y_test = train_test_split(X_data, y_data, test_size=0.25, random_state = shuffle_seed)
 #
+X_input,y_input = fetch_data(dataset, return_X_y=True)
+scaler = StandardScaler()
+scaler.fit(X_input)
+X_input = scaler.transform(X_input)
 
-# For the template, we generate some random numbers that could serve as example data.
-# Note that this data is unlikely to be useful for learning.  It just fills the need
-# for data of a specific format.
+if args.vector_length:
+    input_length = args.vector_length
+else:
+    input_length = (X_input.shape[0] + X_input.shape[1]) * len(np.unique(y_input))
+
+print("input length: ", input_length)
+
+X_train, X_test, y_train, y_test = train_test_split(X_input, y_input,\
+                                                    test_size=0.25,\
+                                                    random_state = seed)
+
+nk = floor(X_train.shape[0]/num_clients)
+n = X_train.shape[0]
+
+# correct shape parameter help
+X_test, X_help, y_test, y_help = train_test_split(X_test, y_test,\
+                                                  test_size=0.1, random_state\
+                                                  = seed)
 
 # Randomly shuffle and split the data for training and testing.
 # X_train, X_test, y_train, y_test = train_test_split(X_data, y_data, test_size=0.25)
@@ -197,6 +232,16 @@ agents.extend([ ServiceAgent(
                 neighborhood_size = neighborhood_size,
                 parallel_mode = parallel_mode,
                 debug_mode = debug_mode,
+                input_length = input_length,
+                classes = np.unique(y_train),
+                X_test = X_test,
+                y_test = y_test,
+                X_help = X_help,
+                y_help = y_help,
+                nk = nk,
+                n = n,
+                c = args.constant,
+                m = args.multiplier,
                 ) ])
 
 
@@ -216,7 +261,15 @@ for i in range (a, b):
                 # multiplier = accy_multiplier, X_train = X_train, y_train = y_train, X_test = X_test, y_test = y_test,
                 # split_size = split_size, secret_scale = secret_scale,
                 debug_mode = debug_mode,
-                random_state = np.random.RandomState(seed=np.random.randint(low=0,high=2**32,  dtype='uint64'))))
+                random_state = np.random.RandomState(seed=np.random.randint(low=0,high=2**32, dtype='uint64')),
+                X_train = X_train,
+                y_train = y_train,
+                input_length= input_length,
+                classes = np.unique(y_train),
+                nk = nk,
+                c = args.constant,
+                m = args.multiplier,
+                            ))
 
 agent_types.extend([ "ClientAgent" for i in range(a,b) ])
 agent_count += num_clients

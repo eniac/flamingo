@@ -26,6 +26,7 @@ from Cryptodome.PublicKey import ECC
 from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
 
+from sklearn.neural_network import MLPClassifier
 
 # Secret sharing for each client and the server
 # import Crypto.Protocol.SecretSharing as shamir
@@ -49,12 +50,42 @@ class SA_ServiceAgent(Agent):
                  num_neighbors=-1,
                  neighbor_threshold=-1,
                  users={},
+                 max_input=10000,
                  debug_mode=0,
-                 max_input=10000):
+                 # inputs for MLP
+                 input_length=1024,
+                 classes=None,
+                 X_test=None,
+                 y_test=None,
+                 X_help=None,
+                 y_help=None,
+                 nk=None,
+                 n=None,
+                 c=100,
+                 m=16):
 
         # Base class init.
         super().__init__(id, name, type, random_state)
 
+        # MLP inputs
+        self.classes = classes
+        self.X_test = X_test
+        self.y_test = y_test
+        self.X_help = X_help
+        self.y_help = y_help
+        self.c = c
+        self.m = m
+        self.nk = nk
+        self.n = n
+        self.global_coef = None
+        self.global_int = None
+
+        # Total number of clients and the threshold
+        self.num_clients = num_clients
+       
+        self.max_input = max_input
+        self.max_sum = max_input * num_clients
+        
         self.logger = logging.getLogger("Log")
         self.logger.setLevel(logging.INFO)
         if debug_mode:
@@ -62,7 +93,7 @@ class SA_ServiceAgent(Agent):
 
         # Set parameters
         self.num_clients = num_clients
-        self.vector_len = 1024
+        self.vector_len = input_length
         self.vector_dtype = 'uint32'
         self.vec_sum_partial = np.zeros(self.vector_len, dtype=self.vector_dtype)
         self.prime = ecchash.n
@@ -98,7 +129,6 @@ class SA_ServiceAgent(Agent):
 
         self.user_vectors = {}
         self.recv_user_vectors = {}
-    
         self.recv_user_pubkeys = {}
         self.user_pubkeys = {}
 
@@ -261,7 +291,12 @@ class SA_ServiceAgent(Agent):
                 
                 # Store the vectors
                 self.recv_user_vectors[sender_id] = msg.body['vector']
-                
+        
+                # ML parameters
+                self.final_layers = msg.body['layers']
+                self.final_outputs = msg.body['out']
+                self.final_iter = msg.body['iter']
+            
             else:
                 print("Server receives VECTORS from iteration", msg.body['iteration'],
                       " client ", msg.body['sender'])
@@ -740,6 +775,71 @@ class SA_ServiceAgent(Agent):
         print(f"[Server] finished iteration {self.current_iteration} at {currentTime + server_comp_delay}")
         print()
         
+        tmp_recon_mi = {}
+        for i in self.recon_shares_mi:
+            tmp_recon_mi[i] = {}
+            for j in self.recon_shares_mi[i]:
+                tmp_recon_mi[i][j] = int(self.recon_shares_mi[i][j][1])
+        print("Server comm for recv recon shares:", 
+            len(dill.dumps(tmp_recon_ai)) + 
+            len(dill.dumps(tmp_recon_mi)))
+
+
+        final_sum = self.vec_sum_partial
+        rec = len(self.user_vectors)
+        print("REC {}", rec)
+
+        mlp = MLPClassifier(max_iter=1,warm_start=True)
+        mlp.partial_fit(self.X_help,self.y_help,self.classes)
+        if int(final_sum[0]/rec) == 1:
+            #MLP
+            mlp.n_iter_ = self.final_iter #int(final_sum[0]/rec)
+            mlp.n_layers_ = self.final_layers #int(final_sum[1]/rec)
+            mlp.n_outputs_ = self.final_outputs #int(final_sum[2]/rec)
+            mlp.t_ = int(final_sum[3]/rec)
+
+            nums = np.vectorize(lambda d: d * 1/rec)(final_sum)
+            #print(nums)
+            nums = np.vectorize(lambda d: (d/pow(2,self.m)) \
+                            - self.c )(nums)
+
+            c_indx = []
+            i_indx = []
+        
+            x =  7
+            for z in range(mlp.n_layers_ - 1):
+                a = int(final_sum[x]/rec)
+                x += 1
+                b = int(final_sum[x]/rec)
+                x += 1
+                c_indx.append((a,b))
+            for z in range(mlp.n_layers_ - 1):
+                a = int(final_sum[x]/rec)
+                i_indx.append(a)
+                x += 1
+
+            #x += mlp.n_iter_
+            i_nums = []
+            c_nums = []
+            for z in range(mlp.n_layers_ - 1):
+                a,b = c_indx[z]
+                c_nums.append(np.reshape(np.array(nums[x:(x+(a*b))]),(a,b)))
+                x += (a*b)
+            for z in range(mlp.n_layers_ - 1):
+                a = i_indx[z]
+                i_nums.append(np.reshape(np.array(nums[x:(x+a)]),(a,)))
+
+            mlp.coefs_ = c_nums
+            mlp.intercepts_ = i_nums
+
+            print("[Server] MLP SCORE: ", mlp.score(self.X_test,self.y_test))
+        else:
+            print("[Server] Skipping model training bc of bad outputs")
+    
+        print("Server finished iteration", self.current_iteration, 
+            "at", currentTime + server_comp_delay)
+        # should reset these before sending REQ
+        # Reset iteration variables
 
         # Reset iteration variables before sending REQ
         self.current_round = 1
@@ -758,6 +858,16 @@ class SA_ServiceAgent(Agent):
                                       "iteration": self.current_iteration,
                                       "sender": 0,
                                       "output": 1,
+                                      "coefs": mlp.coefs_,
+                                      "ints": mlp.intercepts_,
+                                      "n_iter": mlp.n_iter_,
+                                      "n_layers": mlp.n_layers_,
+                                      "n_outputs": mlp.n_outputs_,
+                                      "t": mlp.t_,
+                                      "nic": mlp._no_improvement_count,
+                                      "loss": mlp.loss_,
+                                      "best_loss": mlp.best_loss_,
+                                      "loss_curve": mlp.loss_curve_,
                                       }),
                              tag="comm_output_server")
 

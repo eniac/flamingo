@@ -28,6 +28,8 @@ from Cryptodome.PublicKey import ECC
 from Cryptodome.Cipher import AES
 from Cryptodome.Random import get_random_bytes
 
+from sklearn.neural_network import MLPClassifier
+
 # The PPFL_TemplateClientAgent class inherits from the base Agent class.  It has the
 # structure of a secure federated learning protocol with secure multiparty communication,
 # but without any particular learning or noise methods.  That is, this is a template in
@@ -44,12 +46,23 @@ class SA_ClientAgent(Agent):
                  num_clients=None,
                  num_neighbors=-1,
                  threshold=-1,
+                 num_subgraphs=None,
                  debug_mode=0,
-                 random_state=None):
+                 random_state=None,
+                 X_train=None,
+                 y_train=None,
+                 input_length=1024,
+                 classes=None,
+                 nk=10,
+                 c=100,
+                 m=16):
 
         # Base class init.
         super().__init__(id, name, type, random_state)
 
+ # Record the number of iterations the clients will perform.
+        self.no_of_iterations = iterations
+        
         self.logger = logging.getLogger("Log")
         self.logger.setLevel(logging.INFO)
         if debug_mode:
@@ -74,13 +87,9 @@ class SA_ClientAgent(Agent):
         self.stored_shares_ai = {}
         self.stored_shares_mi = {}
 
-        self.vector_len = 1024
+        self.vector_len = input_length
         self.vector_dtype = 'uint32'
         
-
-        # Record the number of iterations the clients will perform.
-        self.no_of_iterations = iterations
-
         self.neighbors = set()
         self.neighbors_pubkeys = {}
         self.num_choose = math.ceil(math.log2(self.num_clients))
@@ -105,7 +114,58 @@ class SA_ClientAgent(Agent):
         self.current_base = 0
         
 
-    # Simulation lifecycle messages.
+        # MLP inputs
+        self.classes = classes
+        self.nk = nk
+        if (self.nk < len(self.classes)) or (self.nk >= X_train.shape[0]):
+            print("nk is a bad size")
+            exit(0)
+
+        self.global_coefs = None
+        self.global_int = None
+        self.global_n_iter = None
+        self.global_n_layers = None
+        self.global_n_outputs = None
+        self.global_t = None
+        self.global_nic = None
+        self.global_loss = None
+        self.global_best_loss = None
+        self.global_loss_curve = None
+        self.c = c
+        self.m = m
+
+        # pick local training data
+        self.prng = np.random.Generator(np.random.SFC64())
+        obv_per_iter = self.nk #math.floor(X_train.shape[0]/self.num_clients)
+
+        self.trainX = [np.empty((obv_per_iter,X_train.shape[1]),dtype=X_train.dtype) for i in range(self.no_of_iterations)]
+        self.trainY = [np.empty((obv_per_iter,),dtype=X_train.dtype) for i in range(self.no_of_iterations)]
+
+        for i in range(self.no_of_iterations):
+            #self.input.append(self.prng.integer(input_range));
+            slice = self.prng.choice(range(X_train.shape[0]), size=obv_per_iter, replace = False)
+            perm = self.prng.permutation(range(X_train.shape[0]))
+            p = 0
+            while (len(set(y_train[slice])) < len(self.classes)):
+                if p >= X_train.shape[0]:
+                    print("Dataset does not have the # classes it claims")
+                    exit(0)
+                add = [perm[p]]
+                merge = np.concatenate((slice, add))
+                if (len(set(y_train[merge])) > len(set(y_train[slice]))):
+                    u, c = np.unique(y_train[slice], return_counts=True)
+                    dup = u[c > 1]
+                    rm = np.where(y_train[slice] == dup[0])[0][0]
+                    slice = np.concatenate((add, np.delete(slice, rm)))
+                p += 1
+
+            if (slice.size != obv_per_iter):
+                print("n_k not going to be consistent")
+                exit(0)
+
+            # Pull together the current local training set.
+            self.trainX.append(X_train[slice].copy())
+            self.trainY.append(y_train[slice].copy())
 
     def kernelStarting(self, startTime):
 
@@ -293,7 +353,67 @@ class SA_ClientAgent(Agent):
 
                 # computet the masked vector in advance using the neighbors_pubkeys
                 # set input vector
-                self.vec = np.ones(self.vector_len, dtype=self.vector_dtype)
+                #self.vec = np.ones(self.vector_len, dtype=self.vector_dtype)
+
+                # train local data
+                mlp = MLPClassifier()
+                if self.current_iteration > 1:
+                    mlp = MLPClassifier(warm_start=True)
+                    mlp.coefs_ = self.global_coefs.copy()
+                    mlp.intercepts_ = self.global_int.copy()
+
+                    mlp.n_iter_ = self.global_n_iter
+                    mlp.n_layers_ = self.global_n_layers
+                    mlp.n_outputs_ = self.global_n_outputs
+                    mlp.t_ = self.global_t
+                    mlp._no_improvement_count = self.global_nic
+                    mlp.loss_ = self.global_loss
+                    mlp.best_loss_ = self.global_best_loss
+                    mlp.loss_curve_ = self.global_loss_curve.copy()
+                    mlp.out_activation_ = "softmax"
+
+                # num epochs
+                for j in range(5):
+                    mlp.partial_fit(self.trainX[self.no_of_iterations],self.trainY[self.no_of_iterations],self.classes)
+                padding = self.vector_len - 7 - ((mlp.n_layers_-1)*3) #- mlp.n_iter_
+                for z in range(mlp.n_layers_ - 1):
+                    padding = padding - mlp.coefs_[z].size
+                    padding = padding - mlp.intercepts_[z].size
+
+                if padding < 0:
+                    print("Need more space to encode model weights, please adjust vector by:"+str(-1*padding))
+                    exit(1)
+
+                float_vec = np.concatenate((np.zeros(7),np.zeros((mlp.n_layers_-1)*3)))
+
+                for z in range(mlp.n_layers_ - 1):
+                    float_vec = np.concatenate((float_vec,np.array(mlp.coefs_[z]).flatten()))
+                for z in range(mlp.n_layers_ - 1):
+                    float_vec = np.concatenate((float_vec,np.array(mlp.intercepts_[z]).flatten()))
+
+                float_vec = np.concatenate((float_vec,np.zeros(padding)))
+                vec = np.vectorize(lambda d: (d+self.c) * pow(2,self.m))(float_vec).astype(self.vector_dtype)
+
+                vec[0] = 1 #mlp.n_iter_
+                vec[1] = mlp.n_layers_
+                vec[2] = mlp.n_outputs_
+                vec[3] = mlp.t_
+                vec[4] = mlp._no_improvement_count
+                vec[5] = mlp.loss_
+                vec[6] = mlp.best_loss_
+
+                x = 7
+                for z in range(mlp.n_layers_ - 1):
+                    vec[x] = mlp.coefs_[z].shape[0]
+                    x += 1
+                    vec[x] = mlp.coefs_[z].shape[1]
+                    x += 1
+                for z in range(mlp.n_layers_ - 1):
+                    vec[x] = mlp.intercepts_[z].size
+                    x += 1
+
+                #self.vec = np.ones(self.vector_len, dtype=self.vector_dtype)
+                self.vec = vec
 
                 # compute individual mask
                 if self.mi_bytes == None:
@@ -348,6 +468,9 @@ class SA_ClientAgent(Agent):
                                       "iteration": self.current_iteration,
                                       "sender": self.id,
                                       "vector": self.vec,
+                                      "layers": mlp.n_layers_,
+                                      "iter": mlp.n_iter_,
+                                      "out": mlp.n_outputs_,
                                       }),
                              tag="vector_to_server")
 
@@ -463,6 +586,18 @@ class SA_ClientAgent(Agent):
             # send pubkeys to the server 
             dt_protocol_start = pd.Timestamp('now')
             
+            self.global_coefs = msg.body['coefs']
+            self.global_int = msg.body['ints']
+            self.global_n_iter = msg.body['n_iter']
+            self.global_n_layers =msg.body['n_layers']
+            self.global_n_outputs = msg.body['n_outputs']
+            self.global_t = msg.body['t']
+            self.global_nic = msg.body['nic']
+            self.global_loss = msg.body['loss']
+            self.global_best_loss = msg.body['best_loss']
+            self.global_loss_curve = msg.body['loss_curve']
+
+
             # generate new sk/pk pair
            
             self.mykey = ECC.generate(curve='P-256')

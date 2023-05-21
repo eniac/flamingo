@@ -23,6 +23,8 @@ from util import param
 from util.crypto import ecchash
 from util.crypto.secretsharing import secret_int_to_points, points_to_secret_int
 
+from sklearn.neural_network import MLPClassifier
+
 # parallel helper functions
 def parallel_mult(vec, coeff):
     """scalar multiplication for EC points in parallel.
@@ -48,10 +50,34 @@ class SA_ServiceAgent(Agent):
                  neighborhood_size=1,
                  parallel_mode=1,
                  debug_mode=0,
-                 users={}):
+                 users={},
+                 # inputs for MLP
+                 input_length=1024,
+                 classes=None,
+                 X_test=None,
+                 y_test=None,
+                 X_help=None,
+                 y_help=None,
+                 nk=None,
+                 n=None,
+                 c=100,
+                 m=16):
 
         # Base class init.
         super().__init__(id, name, type, random_state)
+
+        # MLP inputs
+        self.classes = classes
+        self.X_test = X_test
+        self.y_test = y_test
+        self.X_help = X_help
+        self.y_help = y_help
+        self.c = c
+        self.m = m
+        self.nk = nk
+        self.n = n
+        self.global_coef = None
+        self.global_int = None
 
         self.logger = logging.getLogger("Log")
         self.logger.setLevel(logging.INFO)
@@ -68,7 +94,7 @@ class SA_ServiceAgent(Agent):
         self.prime = ecchash.n
 
         # inputs
-        self.vector_len = param.vector_len
+        self.vector_len = input_length #param.vector_len
         self.vector_dtype = param.vector_type
 
         # graph
@@ -228,6 +254,11 @@ class SA_ServiceAgent(Agent):
                 self.recv_user_vectors[sender_id] = msg.body['vector']
                 if __debug__: 
                     self.logger.info(f"Server received vector from client {sender_id-1} at {currentTime}")
+                # ML parameters
+                self.final_layers = msg.body['layers']
+                self.final_outputs = msg.body['out']
+                self.final_iter = msg.body['iter']
+    
 
                 # parse the cipher for pairwise and mi
                 cur_clt_pairwise_cipher = msg.body['enc_pairwise']
@@ -601,12 +632,15 @@ class SA_ServiceAgent(Agent):
                 elif recon_symbol_list[i] == -1:
                     cancel_vec = cancel_vec - np.frombuffer(prg_pairwise[i], dtype=self.vector_dtype)
 
+            final_sum = self.vec_sum_partial + cancel_vec + mi_vec
             print("[Server] final sum:", self.vec_sum_partial + cancel_vec + mi_vec)
 
         else:
+            final_sum = self.vec_sum_partial + mi_vec
             print("[Server] no client dropped out.")
             print("[Server] final sum:", self.vec_sum_partial + mi_vec)
 
+        rec = len(self.user_vectors)
 
         self.user_vectors = {}
         self.committee_shares_pairwise = {}
@@ -624,6 +658,51 @@ class SA_ServiceAgent(Agent):
         
         # Accumulate into time log.
         self.recordTime(dt_protocol_start, "RECONSTRUCTION")
+
+        #MLP
+        mlp = MLPClassifier(max_iter=1,warm_start=True)
+        mlp.partial_fit(self.X_help,self.y_help,self.classes)
+        
+        mlp.n_iter_ = self.final_iter #int(final_sum[0]/rec)
+        mlp.n_layers_ = self.final_layers #int(final_sum[1]/rec)
+        mlp.n_outputs_ = self.final_outputs #int(final_sum[2]/rec)
+        mlp.t_ = int(final_sum[3]/rec)
+       
+        nums = np.vectorize(lambda d: d * 1/rec)(final_sum)
+        nums = np.vectorize(lambda d: (d/pow(2,self.m)) \
+                            - self.c )(nums)
+
+        # use aggregation to set MLP classifier
+        c_indx = []
+        i_indx = []
+
+        x =  7
+        for z in range(mlp.n_layers_ - 1):
+            a = int(final_sum[x]/rec)
+            x += 1
+            b = int(final_sum[x]/rec)
+            x += 1
+            c_indx.append((a,b))
+        for z in range(mlp.n_layers_ - 1):
+            a = int(final_sum[x]/rec)
+            i_indx.append(a)
+            x += 1
+
+        #x += mlp.n_iter_ 
+        i_nums = []
+        c_nums = []
+        for z in range(mlp.n_layers_ - 1):
+            a,b = c_indx[z]
+            c_nums.append(np.reshape(np.array(nums[x:(x+(a*b))]),(a,b)))
+            x += (a*b)
+        for z in range(mlp.n_layers_ - 1):
+            a = i_indx[z]
+            i_nums.append(np.reshape(np.array(nums[x:(x+a)]),(a,)))
+
+        mlp.coefs_ = c_nums
+        mlp.intercepts_ = i_nums
+        
+        print("[Server] MLP SCORE: ", mlp.score(self.X_test,self.y_test))
         
         print()
         print("######## Iteration completion ########")
@@ -631,11 +710,22 @@ class SA_ServiceAgent(Agent):
         print()
 
         # Send the result back to each client.
+        # (global MLP weights, other parameters)
         for id in self.users:
             self.sendMessage(id,
                              Message({"msg": "REQ",
                                       "sender": 0,
-                                      "output": 1,  # For machine learning, should be current model weights
+                                      "output": 1,
+                                      "coefs": mlp.coefs_,
+                                      "ints": mlp.intercepts_,
+                                      "n_iter": mlp.n_iter_,
+                                      "n_layers": mlp.n_layers_,
+                                      "n_outputs": mlp.n_outputs_,
+                                      "t": mlp.t_,
+                                      "nic": mlp._no_improvement_count,
+                                      "loss": mlp.loss_,
+                                      "best_loss": mlp.best_loss_,
+                                      "loss_curve": mlp.loss_curve_,
                                       }),
                              tag="comm_output_server")
 
@@ -655,4 +745,3 @@ class SA_ServiceAgent(Agent):
         # Accumulate into time log.
         dt_protocol_end = pd.Timestamp('now')
         self.elapsed_time[categoryName] += dt_protocol_end - startTime
-        
