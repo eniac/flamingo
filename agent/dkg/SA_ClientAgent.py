@@ -39,7 +39,7 @@ class SA_ClientAgent(Agent):
         self.base_point = ECC.EccPoint(ecchash.Gx, ecchash.Gy)
 
         self.users = [i for i in range (1, num_clients + 1)]
-        self.threshold = int(param.fraction * len(self.users))
+        self.threshold = int(param.fraction * len(self.users)) + 1  # degree of poly
 
         self.prime = ecchash.n
  

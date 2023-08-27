@@ -1,4 +1,4 @@
-# Flamingo: Multi-Round Single-Server Secure Aggregation with Applications to Private Federated Learning
+# Flamingo
 
 Flamingo is a system for secure aggregation built for private federated learning. 
 This implementation accompanies our [paper](https://eprint.iacr.org/2023/486) by Yiping Ma, Jess Woods, Sebastian Angel, Antigoni Polychroniadou and Tal Rabin at IEEE S&P (Oakland) 2023. 
@@ -31,7 +31,7 @@ bash Miniconda3-latest-Linux-x86_64.sh
 
 If you use bash, then run
 ```
-source ~/.bash_rc
+source ~/.bashrc
 ```
 
 Now create an environment with python 3.9.12 and then activate it.
@@ -60,7 +60,7 @@ Our program has multiple configs.
 -i [number of iterations] 
 -p [parallel or not] 
 -o [neighborhood size (multiplicative factor of 2logn)] 
--d [debug mode, if on then print all info]
+-d [debug mode, if True then output info for every agent]
 ```
 Flamingo supports batches of clients with size power of 2 from 128,
 e.g., 128, 256, 512.
@@ -70,7 +70,9 @@ Example command:
 python abides.py -c flamingo -n 128 -i 1 -p 1 
 ```
 
-If you want to print out info at every agent, add `-d True` to the above command.
+If you want to print out information of every agent, add `-d True` to the above command.
+
+NOTE: For ease of benchmarking, we divide the entire process into the setup phase (folder `dkg`) and private sum phase (folder `flamingo`). When you execute the command above for summation, the decryptors (a small random subset of clients) already possess their shares of secret key before the summation begins. If you wish to benchmark the setup independently, run `python abides.py -c dkg -n [number of decryptors]`.
 
 ## Machine Learning Applications
 The code is in branch `fedlearn`.
