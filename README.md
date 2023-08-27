@@ -1,6 +1,6 @@
 # Flamingo
 
-Flamingo is a system for secure aggregation built for private federated learning. 
+Flamingo is a system built for privacy-preserving federated learning, where individual training weights are aggregated using secure aggregation. 
 This implementation accompanies our [paper](https://eprint.iacr.org/2023/486) by Yiping Ma, Jess Woods, Sebastian Angel, Antigoni Polychroniadou and Tal Rabin at IEEE S&P (Oakland) 2023. 
 
 WARNING: This is an academic proof-of-concept prototype and is not production-ready.
@@ -62,7 +62,7 @@ Our program has multiple configs.
 -o [neighborhood size (multiplicative factor of 2logn)] 
 -d [debug mode, if True then output info for every agent]
 ```
-Flamingo supports batches of clients with size power of 2 from 128,
+Flamingo supports batches of clients with size power of 2, starting from 128,
 e.g., 128, 256, 512.
 
 Example command:
@@ -72,7 +72,7 @@ python abides.py -c flamingo -n 128 -i 1 -p 1
 
 If you want to print out information of every agent, add `-d True` to the above command.
 
-NOTE: For ease of benchmarking, we divide the entire process into the setup phase (folder `dkg`) and private sum phase (folder `flamingo`). When you execute the command above for summation, the decryptors (a small random subset of clients) already possess their shares of secret key before the summation begins. If you wish to benchmark the setup independently, run `python abides.py -c dkg -n [number of decryptors]`.
+NOTE: For ease of benchmarking, we separate the setup phase (folder `dkg`) and the private sum phase (folder `flamingo`). You can execute the command above directly as we provide the shares of the secret key to decryptors (a small random subset of clients) before the summation begins. If you wish to benchmark the setup independently, run `python abides.py -c dkg -n [number of decryptors]`.
 
 ## Machine Learning Applications
 The code is in branch `fedlearn`.
