@@ -20,6 +20,7 @@ from Cryptodome.Signature import DSS
 
 # other user-level crypto functions
 from util import param
+from util import util
 from util.crypto import ecchash
 from util.crypto.secretsharing import secret_int_to_points, points_to_secret_int
 
@@ -44,6 +45,7 @@ class SA_ServiceAgent(Agent):
                  msg_fwd_delay=1000000,
                  round_time=pd.Timedelta("10s"),
                  iterations=4,
+                 key_length=32,
                  num_clients=10,
                  neighborhood_size=1,
                  parallel_mode=1,
@@ -66,6 +68,7 @@ class SA_ServiceAgent(Agent):
         
         # crypto
         self.prime = ecchash.n
+        self.key_length = key_length
 
         # inputs
         self.vector_len = param.vector_len
@@ -85,21 +88,12 @@ class SA_ServiceAgent(Agent):
 
         """ Read keys. """
         # server (sk, pk)
-        try: 
-            f = open('pki_files/server_key.pem', "rt")
-            self.server_key = ECC.import_key(f.read())
-            f.close()
-        except IOError:
-            raise RuntimeError("No such file. Run setup_pki.py first.")
+        hdr = "pki_files/server_key.pem"
+        self.server_key = util.read_key(hdr)
 
         # system-wide PK
-        try:
-            f = open('pki_files/system_pk.pem', "rt")
-            key = ECC.import_key(f.read())
-            f.close()
-            self.system_sk = key.d
-        except IOError:
-            raise RuntimeError("No such file. Run setup_pki.py first.")
+        hdr = "pki_files/system_pk.pem"
+        self.system_sk = util.read_sk(hdr)
 
         # agent accumulation of elapsed times by category of tasks
         self.elapsed_time = {'REPORT': pd.Timedelta(0),
@@ -220,14 +214,13 @@ class SA_ServiceAgent(Agent):
         """
         # Collect masked vectors from clients
         if msg.body['msg'] == "VECTOR":
-            dt_protocol_start = pd.Timestamp('now')
 
             if msg.body['iteration'] == self.current_iteration:
                 
                 # Store the vectors
                 self.recv_user_vectors[sender_id] = msg.body['vector']
                 if __debug__: 
-                    self.logger.info(f"Server received vector from client {sender_id-1} at {currentTime}")
+                    self.logger.info(f"Server received vector from client {sender_id} at {currentTime}")
 
                 # parse the cipher for pairwise and mi
                 cur_clt_pairwise_cipher = msg.body['enc_pairwise']
@@ -246,7 +239,6 @@ class SA_ServiceAgent(Agent):
 
         # Collect signed labels from decryptors
         elif msg.body['msg'] == "SIGN":
-            dt_protocol_start = pd.Timestamp('now')
 
             if msg.body['iteration'] == self.current_iteration:
                 # forward the signatures to all decryptors
@@ -258,9 +250,7 @@ class SA_ServiceAgent(Agent):
 
         # Collect partial decryption results from decryptors
         elif msg.body['msg'] == "SHARED_RESULT":
-            
-            dt_protocol_start = pd.Timestamp('now')
-            
+                    
             if msg.body['iteration'] == self.current_iteration:
                 
                 self.recv_committee_shares_pairwise[sender_id] = msg.body['shared_result_pairwise']
@@ -362,21 +352,21 @@ class SA_ServiceAgent(Agent):
         for id in offline_set:  
             # TODO OPTMIZATION: store neighbors to reduce time
             # find neighbors for client id
-            # client id is from 1 
+            # client id is from 0
             clt_neighbors_list = param.findNeighbors(param.root_seed, self.current_iteration, self.num_clients, id, self.neighborhood_size)
 
             for nb in clt_neighbors_list:       # for all neighbors of this client                
-                if nb + 1 in online_set:        # if this client id's neighbor nb is online 
-                    if (nb, id-1) not in list(self.pairwise_cipher.keys()):     # find tuples (nb, id - 1) in self.pairwise_cipher
-                        print("lost:", (nb, id-1))                              # the first component nb is online client, the second component id-1 is offlne client
+                if nb in online_set:        # if this client id's neighbor nb is online 
+                    if (nb, id) not in list(self.pairwise_cipher.keys()):     # find tuples (nb, id) in self.pairwise_cipher
+                        print("lost:", (nb, id))                              # the first component nb is online client, the second component id is offlne client
                         raise RuntimeError("Message lost. Restart protocol.")
-                    self.dec_target_pairwise[(nb, id-1)] = self.pairwise_cipher[(nb, id-1)]
-                    if nb > id - 1:            
-                        self.recon_symbol[(nb, id-1)] = 1                                 
-                    elif nb < id - 1:
-                        self.recon_symbol[(nb, id-1)] = -1
-                    else:                       # id - 1 == nb
-                        raise RuntimeError("id-1 should not be its own neighbor.")
+                    self.dec_target_pairwise[(nb, id)] = self.pairwise_cipher[(nb, id)]
+                    if nb > id:            
+                        self.recon_symbol[(nb, id)] = 1                                 
+                    elif nb < id:
+                        self.recon_symbol[(nb, id)] = -1
+                    else:                       # id == nb
+                        raise RuntimeError("id should not be its own neighbor.")
         
 
         # Should send only the c1 component of the ciphertext to the committee
@@ -514,7 +504,7 @@ class SA_ServiceAgent(Agent):
             
         sum_df = pd.DataFrame(np.sum(df_mi_shares.values, axis=1) % self.prime) 
         
-        sum_df[0] = sum_df[0].apply(lambda var: var.to_bytes(32, 'big')) 
+        sum_df[0] = sum_df[0].apply(lambda var: var.to_bytes(self.key_length, 'big')) 
 
         # ed_bench = pd.Timestamp('now')
         # print("bench share recon for mi", ed_bench - st_bench)
@@ -581,7 +571,8 @@ class SA_ServiceAgent(Agent):
             sum_df = sum_df + dec_df  
 
             sum_df[0] = sum_df[0].apply(lambda var: 
-                SHA256.new(int(var.x).to_bytes(32, 'big') + int(var.y).to_bytes(32, 'big')).digest()[0:32]) 
+                SHA256.new(int(var.x).to_bytes(self.key_length, 'big') 
+                           + int(var.y).to_bytes(self.key_length, 'big')).digest()[0 : self.key_length]) 
 
             # compute pairwise mask vectors
             prg_pairwise = {}

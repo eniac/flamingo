@@ -3,7 +3,7 @@ import pandas as pd
 from contextlib import contextmanager
 import warnings
 from scipy.spatial.distance import pdist, squareform
-
+from Cryptodome.PublicKey import ECC
 
 # General purpose utility functions for the simulator, attached to no particular class.
 # Available to any agent or other module/utility.  Should not require references to
@@ -155,3 +155,21 @@ def sigmoid(x, beta):
         # zero because it's 1+z.
         z = np.exp(beta*x)
         return z / (1 + z)
+
+
+def read_key(file_name):
+    try:
+        f = open(file_name, "rt")
+        key = ECC.import_key(f.read())
+        f.close()
+    except IOError:
+        raise RuntimeError(f"File {file_name} not found. Run setup_pki.py first.")
+    return key
+
+def read_pk(file_name):
+    key = read_key(file_name)
+    return key.pointQ
+
+def read_sk(file_name):
+    key = read_key(file_name)
+    return key.d

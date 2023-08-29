@@ -22,6 +22,7 @@ from Cryptodome.Signature import DSS
 # other user-level crypto functions
 import hashlib
 from util import param
+from util import util
 from util.crypto import ecchash
 from util.crypto.secretsharing import secret_int_to_points, points_to_secret_int
 
@@ -52,24 +53,13 @@ class SA_ClientAgent(Agent):
 
         """ Read keys. """
         # sk is used to establish pairwise secret with neighbors' public keys
-        try:
-            hdr = 'pki_files/client'+str(self.id-1)+'.pem'
-            f = open(hdr, "rt")
-            self.key = ECC.import_key(f.read())
-            self.secret_key = self.key.d
-            f.close()
-        except IOError:
-            raise RuntimeError("No such file. Run setup_pki.py first.")
-
+        hdr = f"pki_files/client{self.id}.pem"
+        self.key = util.read_key(hdr)
+        self.secret_key = self.key.d
+        
         # Read system-wide pk
-        try:
-            f = open('pki_files/system_pk.pem', "rt")
-            system_key = ECC.import_key(f.read())
-            f.close()
-            self.system_pk = system_key.pointQ
-        except IOError:
-            raise RuntimeError("No such file. Run setup_pki.py first.")
-
+        hdr = f"pki_files/system_pk.pem"
+        self.system_pk = util.read_pk(hdr)
 
         """ Set parameters. """
         self.num_clients = num_clients
@@ -92,13 +82,8 @@ class SA_ClientAgent(Agent):
         self.symmetric_keys = {}
         if self.id in self.user_committee:
             for i in range(num_clients):
-                hdr = 'pki_files/client'+str(i)+'.pem'
-                try: 
-                    f = open(hdr, "rt")
-                    key = ECC.import_key(f.read())
-                    pk = key.pointQ
-                except IOError:
-                    raise RuntimeError("No such file. Run setup_pki.py first.")
+                hdr = f"pki_files/client{i}.pem"
+                pk = util.read_pk(hdr)
 
                 self.symmetric_keys[i] = pk * self.secret_key  # group 
                 self.symmetric_keys[i] = (int(self.symmetric_keys[i].x) & ((1<<128)-1)).to_bytes(16, 'big') # bytes
@@ -125,7 +110,7 @@ class SA_ClientAgent(Agent):
 
         # Initialize custom state properties into which we will later accumulate results.
         # To avoid redundancy, we allow only the first client to handle initialization.
-        if self.id == 1:
+        if self.id == 0:
             self.kernel.custom_state['clt_report'] = pd.Timedelta(0)
             self.kernel.custom_state['clt_crosscheck'] = pd.Timedelta(0)
             self.kernel.custom_state['clt_reconstruction'] = pd.Timedelta(0)
@@ -224,18 +209,11 @@ class SA_ClientAgent(Agent):
             self.logger.info(f"client {self.id} neighbors list: {self.neighbors_list}")
      
         # Download public keys of neighbors from PKI file
-        # NOTE: the ABIDES framework has client id starting from 1. 
+        # Client index starting frrom 0
         neighbor_pubkeys = {}
         for id in self.neighbors_list:
-            try:
-                hdr = 'pki_files/client'+str(id)+'.pem'
-                f = open(hdr, "rt")
-                key = ECC.import_key(f.read())
-                f.close()
-            except IOError:
-                raise RuntimeError("No such file. Run setup_pki.py first.")
-            pk = key.pointQ
-            neighbor_pubkeys[id] = pk
+            hdr = f"pki_files/client{id}.pem"
+            neighbor_pubkeys[id] = util.read_pk(hdr)
         
 
         # send symmetric encryption of shares of mi  
@@ -248,15 +226,9 @@ class SA_ClientAgent(Agent):
 
         committee_pubkeys = {}
         for id in self.user_committee:
-            try:
-                hdr = 'pki_files/client'+str(id-1)+'.pem'
-                f = open(hdr, "rt")
-                key = ECC.import_key(f.read())
-                f.close()
-            except IOError:
-                raise RuntimeError("No such file. Run setup_pki.py first.")
-            pk = key.pointQ
-            committee_pubkeys[id] = pk
+            hdr = f"pki_files/client{id}.pem"
+            committee_pubkeys[id] = util.read_pk(hdr)
+            
 
         # separately encrypt each share
         enc_mi_shares = []
@@ -352,20 +324,20 @@ class SA_ClientAgent(Agent):
 
             if len(vec_prg_pairwise[id]) != self.vector_len:
                 raise RuntimeError("vector length error")
-            if self.id - 1 < id:
+            if self.id < id:
                 vec = vec + vec_prg_pairwise[id]
-            elif self.id - 1 > id:
+            elif self.id > id:
                 vec = vec - vec_prg_pairwise[id]
             else:
-                raise RuntimeError("self id - 1 =", self.id-1, " should not appear in neighbor_list", self.neighbors_list)
+                raise RuntimeError("id itself appears in its neighbor list")
 
 
         # compute encryption of H(t)^{r_ij} (already a group element), only for < relation
         cipher_msg = {}
         
         for id in self.neighbors_list:
-            # NOTE the set sent to the server is indexed from 0
-            cipher_msg[(self.id - 1, id)] = self.elgamal_enc_group(self.system_pk, neighbor_pairwise_mask_seed_group[id])
+            # the set sent to the server is indexed from 0
+            cipher_msg[(self.id, id)] = self.elgamal_enc_group(self.system_pk, neighbor_pairwise_mask_seed_group[id])
 
         if __debug__: 
             client_comp_delay = pd.Timestamp('now') - dt_protocol_start
@@ -373,7 +345,7 @@ class SA_ClientAgent(Agent):
             self.logger.info(f"client {self.id} sends vector at {currentTime + client_comp_delay}")
         
         # Send the vector to the server
-        self.serviceAgentID = 0
+        
         self.sendMessage(self.serviceAgentID,
                          Message({"msg": "VECTOR",
                                   "iteration": self.current_iteration,
@@ -455,7 +427,7 @@ class SA_ClientAgent(Agent):
         dec_shares_mi = []
         cnt = 0
         for id in client_id_list:
-            sym_key = self.symmetric_keys[id-1]
+            sym_key = self.symmetric_keys[id]
             dec_entry = dec_target_mi[cnt]
             nonce = dec_entry[1]
             cipher_holder = AES.new(sym_key, AES.MODE_GCM, nonce=nonce)

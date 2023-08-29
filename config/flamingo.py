@@ -97,8 +97,6 @@ debug_mode = args.debug_mode
 # clear_learning = args.clear_learning
 # collusion = args.collusion
 
-### How many client agents will there be?   1000 in 125 subgraphs of 8 fits ln(n), for example
-# num_subgraphs = args.num_subgraphs
 
 print ("Silent mode: {}".format(util.silent_mode))
 print ("Configuration seed: {}\n".format(seed))
@@ -121,7 +119,7 @@ kernelStopTime = midnight + pd.to_timedelta('2000:00:00')
 # This will configure the kernel with a default computation delay
 # (time penalty) for each agent's wakeup and recvMsg.  An agent
 # can change this at any time for itself.  (nanoseconds)
-defaultComputationDelay = 1000000000 * 0.1  # five seconds
+defaultComputationDelay = 1000000000 * 0.1  # ns
 
 # IMPORTANT NOTE CONCERNING AGENT IDS: the id passed to each agent must:
 #    1. be unique
@@ -176,37 +174,15 @@ secret_scale = 1000000
 ### END OF LOAD DATA SECTION
 
 
-agent_types.extend(["ServiceAgent"])
-agent_count += 1
-
 
 ### Configure a population of cooperating learning client agents.
 a, b = agent_count, agent_count + num_clients
-
-
-### Configure a service agent.
-agents.extend([ ServiceAgent(
-                id = 0, name = "PPFL Service Agent 0",
-                type = "ServiceAgent",
-                random_state = np.random.RandomState(seed=np.random.randint(low=0,high=2**32, dtype='uint64')),
-                msg_fwd_delay=0,
-                users = [*range(a, b)],
-                iterations = num_iterations,
-                round_time = pd.Timedelta(f"{round_time}s"),
-                num_clients = num_clients,
-                neighborhood_size = neighborhood_size,
-                parallel_mode = parallel_mode,
-                debug_mode = debug_mode,
-                ) ])
-
-
 
 client_init_start = time()
 
 # Iterate over all client IDs.
 # Client index number starts from 1.
 for i in range (a, b):
-
   agents.append(ClientAgent(id = i,
                 name = "PPFL Client Agent {}".format(i),
                 type = "ClientAgent",
@@ -219,12 +195,32 @@ for i in range (a, b):
                 random_state = np.random.RandomState(seed=np.random.randint(low=0,high=2**32,  dtype='uint64'))))
 
 agent_types.extend([ "ClientAgent" for i in range(a,b) ])
-agent_count += num_clients
+
 
 client_init_end = time()
 init_seconds = client_init_end - client_init_start
 td_init = timedelta(seconds = init_seconds)
 print (f"Client init took {td_init}")
+
+
+### Configure a service agent.
+
+agents.extend([ ServiceAgent(
+                id = b,   # set id to be a number after all clients
+                name = "PPFL Service Agent",
+                type = "ServiceAgent",
+                random_state = np.random.RandomState(seed=np.random.randint(low=0,high=2**32, dtype='uint64')),
+                msg_fwd_delay=0,
+                users = [*range(a, b)],
+                iterations = num_iterations,
+                round_time = pd.Timedelta(f"{round_time}s"),
+                num_clients = num_clients,
+                neighborhood_size = neighborhood_size,
+                parallel_mode = parallel_mode,
+                debug_mode = debug_mode,
+                ) ])
+
+agent_types.extend(["ServiceAgent"])
 
 
 ### Configure a latency model for the agents.

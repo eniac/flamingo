@@ -43,7 +43,7 @@ def choose_committee(root_seed, committee_size, num_clients):
     cnt = 0
     while (len(user_committee) < committee_size):
         sampled_id = committee_numbers[cnt] % num_clients
-        (user_committee).add(sampled_id + 1)
+        (user_committee).add(sampled_id)
         cnt += 1
 
     return user_committee
@@ -71,38 +71,30 @@ def findNeighbors(root_seed, current_iteration, num_clients, id, neighborhood_si
 
        
     # find the segment for myself
-    my_segment = graph_string[(id - 1) *
-                              segment_len: (id - 1) * (segment_len) + segment_len]
+    my_segment = graph_string[id * segment_len: (id + 1) * segment_len]
 
     # define the number of bits within bytes_per_client that can be convert to int (neighbor's ID)
     bits_per_client = math.ceil(math.log2(num_clients))
     # default number of clients is power of two
     for i in range(num_choose):
-        tmp = my_segment[i*bytes_per_client: i *
-                         bytes_per_client+bytes_per_client]
-        tmp_neighbor = int.from_bytes(
-            tmp, 'big') & ((1 << bits_per_client)-1)
+        tmp = my_segment[i * bytes_per_client: (i + 1) * bytes_per_client]
+        tmp_neighbor = int.from_bytes(tmp, 'big') & ((1 << bits_per_client)-1)
             
-        if tmp_neighbor == id - 1:
-            # print("client", self.id, " random neighbor choice happened to be itself, skip")
+        if tmp_neighbor == id: # random neighbor choice happened to be itself, skip 
             continue
-        if tmp_neighbor in neighbors_list:
-            # print("client", self.id, "already chose", tmp_neighbor, "skip")
+        if tmp_neighbor in neighbors_list: # client already chose tmp_neighbor, skip
             continue
         neighbors_list.add(tmp_neighbor)
 
     # now we have a list for who I chose
     # find my ID in the rest, see which segment I am in. add to neighbors_list
     for i in range(num_clients):
-        if i == id - 1:
+        if i == id:
             continue
-        seg = graph_string[i * segment_len: i *
-                           (segment_len) + segment_len]
-        ls = parse_segment_to_list(
-            seg, num_choose, bits_per_client, bytes_per_client)
-        if id - 1 in ls:
-            # add current segment owner into neighbors_list
-            neighbors_list.add(i)
+        seg = graph_string[i * segment_len: (i + 1) * segment_len]
+        ls = parse_segment_to_list(seg, num_choose, bits_per_client, bytes_per_client)
+        if id in ls:
+            neighbors_list.add(i)  # add current segment owner into neighbors_list
     
     return neighbors_list
 
@@ -110,12 +102,8 @@ def parse_segment_to_list(segment, num_choose, bits_per_client, bytes_per_client
     cur_ls = set()
     # take a segment (byte string), parse it to a list
     for i in range(num_choose):
-        cur_bytes = segment[i*bytes_per_client: i *
-                            bytes_per_client+bytes_per_client]
-           
-        cur_no = int.from_bytes(cur_bytes, 'big') & (
-            (1 << bits_per_client)-1)
-            
+        cur_bytes = segment[i * bytes_per_client: (i + 1) * bytes_per_client]     
+        cur_no = int.from_bytes(cur_bytes, 'big') & ((1 << bits_per_client) - 1)
         cur_ls.add(cur_no)
         
     return cur_ls
