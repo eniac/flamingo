@@ -301,7 +301,7 @@ class SA_ClientAgent(Agent):
                     raise ValueError("mi_bytes is None.")
 
                 prg_mi_holder = AES.new(self.mi_bytes, AES.MODE_CBC, iv=b"0123456789abcdef")
-                data = b"secr" * self.vector_len
+                data = param.fixed_key * self.vector_len
                 prg_mi = prg_mi_holder.encrypt(data)
                 
                 vec_prg_mi = np.frombuffer(prg_mi, dtype=self.vector_dtype)
@@ -322,7 +322,7 @@ class SA_ClientAgent(Agent):
                     
                     prg_pairwise_holder = AES.new(pairwise_seed, AES.MODE_CBC, iv=b"0123456789abcdef")
                     
-                    data = b"secr" * self.vector_len
+                    data = param.fixed_key * self.vector_len
                     
                     prg_pairwise[id] = prg_pairwise_holder.encrypt(data)
                     vec_prg_pairwise[id] = np.frombuffer(prg_pairwise[id], dtype=self.vector_dtype)

@@ -307,15 +307,20 @@ class SA_ServiceAgent(Agent):
         server_comp_delay = pd.Timestamp('now') - dt_protocol_start
         self.setWakeup(currentTime + server_comp_delay + pd.Timedelta('3s'))
 
+    def advertise_keys_read_from_pool(self):
+        self.user_pubkeys = self.recv_user_pubkeys
+        self.recv_user_pubkeys = {}
+    
+    def advertise_keys_clear_pool(self):
+        self.recv_user_choice = {}
 
     def advertise_keys(self, currentTime):
         dt_protocol_start = pd.Timestamp('now')
-
-        self.user_pubkeys = self.recv_user_pubkeys
-        self.recv_user_pubkeys = {}
+        self.advertise_keys_read_from_pool()
+       
         print("Server collected #pubkeys =", len(self.user_pubkeys))
 
-        self.recv_user_choice = {}
+        self.advertise_keys_clear_pool()
 
         # send to users who send their pubkeys
         for id in self.user_pubkeys:
@@ -343,16 +348,20 @@ class SA_ServiceAgent(Agent):
 
         self.setWakeup(currentTime + server_comp_delay + param.wt_google_graph)
 
-    def establish_graph(self, currentTime):
-        dt_protocol_start = pd.Timestamp('now')
-
-        # Server should know a complete graph, who is whose neighbors
-      
-        print("Server collected #graph choice =", len(self.recv_user_choice))
-
+    def establish_graph_read_from_pool(self):
         # send who chose id to client id
         self.user_choice = self.recv_user_choice
         self.recv_user_choice = {}
+
+    def establish_graph_clear_pool(self):
+        return
+
+    def establish_graph(self, currentTime):
+        dt_protocol_start = pd.Timestamp('now')
+        self.establish_graph_read_from_pool()
+        # Server should know a complete graph, who is whose neighbors
+      
+        print("Server collected #graph choice =", len(self.recv_user_choice))
 
         # if set(self.user_choice.keys()) != set(self.user_pubkeys.keys()):
         #     print("user pubkeys:", set(self.user_pubkeys.keys()))
@@ -438,11 +447,8 @@ class SA_ServiceAgent(Agent):
          # Here the server should wait a sufficient time to
          # ensure all user_choice received messages.
         self.setWakeup(currentTime + server_comp_delay + param.wt_google_share) 
-        
-
-    def forward_shares(self, currentTime):
-        dt_protocol_start = pd.Timestamp('now')
-
+    
+    def forward_signatures_read_from_pool(self):
         # self.backup_shares_ai[id] is the shares from client id
         # the server should forward the shares to id's neighbors
         self.backup_shares_ai = self.recv_backup_shares_ai
@@ -450,6 +456,13 @@ class SA_ServiceAgent(Agent):
 
         self.backup_shares_mi = self.recv_backup_shares_mi
         self.recv_backup_shares_mi = {}
+
+    def forward_signatures_clear_pool(self):
+        self.recv_user_vectors = {}
+
+    def forward_shares(self, currentTime):
+        dt_protocol_start = pd.Timestamp('now')
+        self.forward_signatures_read_from_pool()
 
         # ai_shares is a list of length = number of neighbors
         # the server will send each point in ai_shares to each of the client's neighbors
@@ -492,7 +505,7 @@ class SA_ServiceAgent(Agent):
                 forward_shares_mi[j][i] = self.backup_shares_mi[i][cnt]
                 cnt += 1
 
-        self.recv_user_vectors = {}
+        self.forward_signatures_clear_pool()
 
         # at the same time of sending shares, request for vector
         for id in self.user_choice:
@@ -524,13 +537,18 @@ class SA_ServiceAgent(Agent):
         
         self.setWakeup(currentTime + server_comp_delay + param.wt_google_collection)
 
-    def collection(self, currentTime):
-        dt_protocol_start = pd.Timestamp('now')
-
+    def collection_read_from_pool(self):
         # assign user vectors to a new var. empty user vectors immediately.
         self.user_vectors = self.recv_user_vectors
         self.recv_user_vectors = {}
+    
+    def collection_clear_pool(self):
+        self.recv_ack = {}
 
+    def collection(self, currentTime):
+        dt_protocol_start = pd.Timestamp('now')
+
+        self.collection_read_from_pool()
         print("collected vectors =", len(self.user_vectors))
         
         # compute the sum of vectors
@@ -542,7 +560,7 @@ class SA_ServiceAgent(Agent):
 
         # here should request alive signatures
         # server should send to the clients who is alive
-        self.recv_ack = {}
+        self.collection_clear_pool()
         for id in self.user_vectors:
             self.sendMessage(id,
                              Message({"msg": "REQ_ACK",
@@ -565,12 +583,17 @@ class SA_ServiceAgent(Agent):
 
         self.setWakeup(currentTime + server_comp_delay + param.wt_google_crosscheck)
 
-        
-    def check_alive(self, currentTime):
-        dt_protocol_start = pd.Timestamp('now')
-
+    def check_alive_read_from_pool(self):
         self.ack = self.recv_ack
         self.recv_ack = {}
+    
+    def check_alive_clear_pool(self):
+        self.recv_recon_shares_mi = {}
+        self.recv_recon_shares_ai = {}
+
+    def check_alive(self, currentTime):
+        dt_protocol_start = pd.Timestamp('now')
+        self.check_alive_read_from_pool()
 
         # pack the in edge to i, send ack to i
         in_neighbors_ack = {}
@@ -610,9 +633,8 @@ class SA_ServiceAgent(Agent):
             for j in self.neighbors[i]:
                 request_ai_shares[j].append(i)
        
-        
-        self.recv_recon_shares_mi = {}
-        self.recv_recon_shares_ai = {}
+
+        self.check_alive_clear_pool()
 
         for id in self.user_vectors:
             self.sendMessage(id,
@@ -637,17 +659,19 @@ class SA_ServiceAgent(Agent):
 
         self.setWakeup(currentTime + server_comp_delay + param.wt_google_recontruction)
 
-
-
-    def reconstruction(self, currentTime):
-        dt_protocol_start = pd.Timestamp('now')
-    
+    def reconstruction_read_from_pool(self):
         self.recon_shares_mi = self.recv_recon_shares_mi
         self.recv_recon_shares_mi = {}
 
         self.recon_shares_ai = self.recv_recon_shares_ai
         self.recv_recon_shares_ai = {}
 
+    def reconstruction_clear_pool(self):
+        return 
+
+    def reconstruction(self, currentTime):
+        dt_protocol_start = pd.Timestamp('now')
+        self.reconstruction_read_from_pool()
 
         # recon_shares_mi:
         #                  id, share
@@ -670,7 +694,7 @@ class SA_ServiceAgent(Agent):
             mi_bytes = (mi_recon&((1<<128)-1)).to_bytes(16, 'big')
             
             prg_mi_holder = AES.new(mi_bytes, AES.MODE_CBC, iv=b"0123456789abcdef")
-            data = b"secr" * self.vector_len
+            data = param.fixed_key * self.vector_len
             prg_mi = prg_mi_holder.encrypt(data)
                 
             vec_prg_mi = np.frombuffer(prg_mi, dtype=self.vector_dtype)
@@ -698,7 +722,7 @@ class SA_ServiceAgent(Agent):
                 pairwise_seed = (int(pairwise_keys[j].x) & (1<<128) - 1).to_bytes(16, 'big')
                     
                 prg_pairwise_holder = AES.new(pairwise_seed, AES.MODE_CBC, iv=b"0123456789abcdef")
-                data = b"secr" * self.vector_len
+                data = param.fixed_key * self.vector_len
  
                 prg_pairwise[j] = prg_pairwise_holder.encrypt(data)                
                 vec_prg_pairwise[j] = np.frombuffer(prg_pairwise[j], dtype=self.vector_dtype)

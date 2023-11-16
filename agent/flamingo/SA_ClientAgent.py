@@ -28,6 +28,9 @@ from util.crypto.secretsharing import secret_int_to_points, points_to_secret_int
 
 # The PPFL_TemplateClientAgent class inherits from the base Agent class.
 class SA_ClientAgent(Agent):
+    
+    def __str__(self):
+        return "[client]"
 
     # Default param:
     # num of iterations = 4
@@ -45,13 +48,13 @@ class SA_ClientAgent(Agent):
         super().__init__(id, name, type, random_state)
 
         # Set logger
-        self.logger = logging.getLogger("Log")
+        self.logger = logging.getLogger(__name__)
         self.logger.setLevel(logging.INFO)
         if debug_mode:
             logging.basicConfig()
 
 
-        """ Read keys. """
+        """Read keys."""
         # sk is used to establish pairwise secret with neighbors' public keys
         hdr = f"pki_files/client{self.id}.pem"
         self.key = util.read_key(hdr)
@@ -61,7 +64,7 @@ class SA_ClientAgent(Agent):
         hdr = f"pki_files/system_pk.pem"
         self.system_pk = util.read_pk(hdr)
 
-        """ Set parameters. """
+        """Set parameters."""
         self.num_clients = num_clients
         self.neighborhood_size = neighborhood_size
         self.vector_len = param.vector_len
@@ -72,7 +75,7 @@ class SA_ClientAgent(Agent):
         self.cipher_stored = None   # Store cipher from server across steps
 
 
-        """ Select committee. """
+        """Select committee."""
         self.user_committee = param.choose_committee(param.root_seed, param.committee_size, self.num_clients)
         self.committee_shared_sk = None
         self.committee_member_idx = None
@@ -253,7 +256,7 @@ class SA_ClientAgent(Agent):
         # Compute mask, compute masked vector
         # PRG individual mask
         prg_mi_holder = ChaCha20.new(key=mi_bytes, nonce=param.nonce)
-        data = b"secr" * self.vector_len
+        data = param.fixed_key * self.vector_len
         prg_mi = prg_mi_holder.encrypt(data)
 
         # compute pairwise masks r_ij
@@ -483,4 +486,13 @@ class SA_ClientAgent(Agent):
     def recordTime(self, startTime, categoryName):
         dt_protocol_end = pd.Timestamp('now')
         self.elapsed_time[categoryName] += dt_protocol_end - startTime
-       
+    
+    def agent_print(*args, **kwargs):
+        """
+        Custom print function that adds a [Server] header before printing.
+
+        Args:
+            *args: Any positional arguments that the built-in print function accepts.
+            **kwargs: Any keyword arguments that the built-in print function accepts.
+        """
+        print(*args, **kwargs)
