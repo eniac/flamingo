@@ -11,31 +11,27 @@ import numpy as np
 import pandas as pd
 import random
 
-# pycryptodomex library functions
 from Cryptodome.PublicKey import ECC
 from Cryptodome.Cipher import AES, ChaCha20
 from Cryptodome.Random import get_random_bytes
 from Cryptodome.Hash import SHA256
 from Cryptodome.Signature import DSS
 
-# other user-level crypto functions
 from util import param
 from util import util
 from util.crypto import ecchash
 from util.crypto.secretsharing import secret_int_to_points, points_to_secret_int
 
-# parallel helper functions
+
 def parallel_mult(vec, coeff):
-    """scalar multiplication for EC points in parallel.
-        each df[id] is a vector of EC points;
-        interpolation_coefficients is a list, each component is a number
-    """
+    """Scalar multiplication for EC points in parallel."""
     points = vec.apply(lambda row: ECC.EccPoint(row[0],row[1]),axis=1)
     points = points * coeff
     points = pd.DataFrame([(p.x,p.y) for p in points])
     points = points.applymap(lambda x: int(x))
 
     return points
+
 
 # PPFL_ServiceAgent class inherits from the base Agent class.
 class SA_ServiceAgent(Agent):
@@ -55,7 +51,7 @@ class SA_ServiceAgent(Agent):
                  debug_mode=0,
                  users={}):
 
-        # Base class init.
+        # Base class init. 
         super().__init__(id, name, type, random_state)
 
         self.logger = logging.getLogger(__name__)
@@ -64,37 +60,30 @@ class SA_ServiceAgent(Agent):
         if debug_mode:
             logging.basicConfig()
 
-        """ Set parameters. """
-        # parties
-        self.num_clients = num_clients
-        self.users = users  # the list of all user IDs
-        
-        # crypto
-        self.prime = ecchash.n
-        self.key_length = key_length
-
-        # inputs
-        self.vector_len = param.vector_len
-        self.vector_dtype = param.vector_type
-
-        # graph
-        self.neighborhood_size = neighborhood_size
-
-        # parallel
-        self.parallel_mode = parallel_mode
-
-        # system  
+        # System parameters.
         self.msg_fwd_delay = msg_fwd_delay  # time to forward a peer-to-peer client relay message
         self.round_time = round_time        # default waiting time per round
         self.no_of_iterations = iterations  # number of iterations 
+        self.parallel_mode = parallel_mode  # parallel
+        
+        # Input parameters.
+        self.num_clients = num_clients      # number of users per training round
+        self.users = users                  # the list of user IDs
+        self.vector_len = param.vector_len
+        self.vector_dtype = param.vector_type
+        self.vec_sum_partial = np.zeros(self.vector_len, dtype=self.vector_dtype)
+        self.final_sum = np.zeros(self.vector_len, dtype=self.vector_dtype)
+       
+        # Security parameeters.
+        self.prime = ecchash.n
+        self.key_length = key_length
+        self.neighborhood_size = neighborhood_size
 
 
-        """ Read keys. """
-        # server (sk, pk)
+        # Read keys.
         hdr = "pki_files/server_key.pem"
         self.server_key = util.read_key(hdr)
 
-        # system-wide PK
         hdr = "pki_files/system_pk.pem"
         self.system_sk = util.read_sk(hdr)
 
@@ -105,39 +94,36 @@ class SA_ServiceAgent(Agent):
                              }
 
         
-        # Generate committee members from a root seed.
-        self.user_committee = param.choose_committee(param.root_seed, param.committee_size, self.num_clients)
-
-        # Compute committee threshold.
+        # Setup committee (decryptors).
+        self.user_committee = param.choose_committee(param.root_seed, 
+                                                     param.committee_size, 
+                                                     self.num_clients)
         self.committee_threshold = int(param.fraction * len(self.user_committee))
 
         
-        """ Initialize pools. """
+        # Initialize pools.
         self.user_vectors = {}
-        self.recv_user_vectors = {}
-
         self.pairwise_cipher = {}
-        self.recv_pairwise_cipher = {}
         self.mi_cipher = {}
-        self.recv_mi_cipher = {}
-
-        self.committee_shares_pairwise = {} 
-        self.recv_committee_shares_pairwise = {}
-        self.committee_shares_mi = {}
-        self.recv_committee_shares_mi = {}
-
-        self.recv_committee_sigs = {}
-        self.committee_sigs = {}
-
         self.recon_index = {}
+        
+        self.recv_user_vectors = {}
+        self.recv_pairwise_cipher = {}
+        self.recv_mi_cipher = {}
         self.recv_recon_index = {}
 
+        self.committee_shares_pairwise = {} 
+        self.committee_shares_mi = {}
+        self.committee_sigs = {}
+
+        self.recv_committee_shares_pairwise = {}
+        self.recv_committee_shares_mi = {}
+        self.recv_committee_sigs = {}
+        
         self.dec_target_pairwise = {}
         self.dec_target_mi = {}
-
-        self.vec_sum_partial = np.zeros(self.vector_len, dtype=self.vector_dtype)
-        self.final_sum = np.zeros(self.vector_len, dtype=self.vector_dtype)
-       
+        
+        
         # Track the current iteration and round of the protocol.
         self.current_iteration = 1
         self.current_round = 0
@@ -158,7 +144,6 @@ class SA_ServiceAgent(Agent):
         }
     
     # Simulation lifecycle messages.
-
     def kernelStarting(self, startTime):
         # self.kernel is set in Agent.kernelInitializing()
 
@@ -186,71 +171,76 @@ class SA_ServiceAgent(Agent):
         # Allow the base class to perform stopping activities.
         super().kernelStopping()
 
-    # Simulation participation messages.
-
-    # The service agent wakeup at the end of each round
-    # More specifically, it stores the messages on receiving the msgs;
-    # When the timing out happens, or it collects enough number of msgs,
-    # (i.e., from all clients it is waiting for),
-    # it starts processing and replying the messages.
 
     def wakeup(self, currentTime):
+        """
+        The service agent wakes up at the end of each round.
+
+        More specifically, it:
+        1. Stores the received messages.
+        2. When timing out occurs or 
+           when it collects a sufficient number of messages
+           from the clients it is waiting for, 
+           initiates processing and replying to messages 
+
+        Args:
+        - currentTime: The (absolute) current time when the agent wakes up.
+                       Note that currentTime is the 'start' of the function.
+        """
         super().wakeup(currentTime)
         self.agent_print(f"wakeup in iteration {self.current_iteration} at function {self.namedict[self.current_round]}; current time is {currentTime}")
 
         # In the k-th iteration
         self.aggProcessingMap[self.current_round](currentTime)
 
-    # On receiving messages
-
+    
     def receiveMessage(self, currentTime, msg):
+        """Collect messages from clients.
+        
+        Three types: 
+        - VECTOR message meant for report step, 
+        - SIGN message meant for crosscheck step,
+        - SHARED_RESULT message meant for reconstruction step.
+        """
+
         # Allow the base Agent to do whatever it needs to.
         super().receiveMessage(currentTime, msg)
 
         # Get the sender's id (should be client id)
         sender_id = msg.body['sender']
+        if __debug__: self.logger.info(f"received vector from client {sender_id} at {currentTime}")
 
-        """Collect messages from clients.
-        Three types: 
-            VECTOR message meant for report step, 
-            SIGN message meant for crosscheck step,
-            SHARED_RESULT message meant for reconstruction step.
-        """
         # Collect masked vectors from clients
         if msg.body['msg'] == "VECTOR":
 
             if msg.body['iteration'] == self.current_iteration:
-                if __debug__: 
-                    self.logger.info(f"received vector from client {sender_id} at {currentTime}")
-
+                
                 # Store the vectors
                 self.recv_user_vectors[sender_id] = msg.body['vector']
                 
-                # parse the cipher for pairwise and mi
-                cur_clt_pairwise_cipher = msg.body['enc_pairwise']
-                prev_len = len(self.recv_pairwise_cipher)
-                for d in (self.recv_pairwise_cipher, cur_clt_pairwise_cipher): self.recv_pairwise_cipher.update(d)
-                post_len = len(self.recv_pairwise_cipher)
-                if post_len - prev_len != len(cur_clt_pairwise_cipher):
-                    raise RuntimeError("Some pairwise secret has been sent twice. Error in offline/online status of some clients.")
-                                
                 # parse cipher for shares of mi
                 self.recv_mi_cipher[sender_id] = msg.body['enc_mi_shares']
 
+                # parse the cipher for pairwise mask 
+                cur_clt_pairwise_cipher = msg.body['enc_pairwise']
+
+                # update pairwise cipher
+                for d in (self.recv_pairwise_cipher, cur_clt_pairwise_cipher): 
+                    self.recv_pairwise_cipher.update(d)
+                               
             else:
                 if __debug__:
                     self.logger.info(f"LATE MSG: Server receives VECTORS from iteration {msg.body['iteration']} client {msg.body['sender']}")
 
         # Collect signed labels from decryptors
         elif msg.body['msg'] == "SIGN":
-
+            
             if msg.body['iteration'] == self.current_iteration:
                 # forward the signatures to all decryptors
                 self.recv_committee_sigs[sender_id] = msg.body['signed_labels']
             
             else:
-                if __debug__:
-                    self.logger.info(f"LATE MSG: Server receives signed labels from iteration {msg.body['iteration']} client {msg.body['sender']}")
+                if __debug__: self.logger.info(f"LATE MSG: Server receives signed labels from iteration {msg.body['iteration']} client {msg.body['sender']}")
 
         # Collect partial decryption results from decryptors
         elif msg.body['msg'] == "SHARED_RESULT":
@@ -266,9 +256,7 @@ class SA_ServiceAgent(Agent):
                     self.logger.info(f"LATE MSG: Server receives SHARED_RESULT from iteration {msg.body['iteration']} client {msg.body['sender']}")
 
     
-    
     # Processing and replying the messages.
-    # NOTE: the currentTime parameter is the 'start' of the function
     def initFunc(self, currentTime):
         dt_protocol_start = pd.Timestamp('now')
       
@@ -317,33 +305,23 @@ class SA_ServiceAgent(Agent):
         self.recv_recon_index = {}
         self.recv_committee_sigs = {}
 
-    def report(self, currentTime):
-        """Process masked vectors.
-            Server at this point should receive:
-            vectors, encryption of mi shares, encryption of h_ijt
-        """
-
-        self.report_read_from_pool()
+    def report_process(self):
         self.agent_print("number of collected vectors:", len(self.user_vectors))
 
-        dt_protocol_start = pd.Timestamp('now')
-        
-        # client_id_list: for committee member to know which pairwise key to decrypt which entry
-        client_id_list = list(self.mi_cipher.keys())
+        # a list for committee member to know 
+        # which pairwise key is used to decrypt which entry
+        self.client_id_list = list(self.mi_cipher.keys())
         
         # each row of df_mi_shares is the shares of an mi from a client
-        df_mi_cipher = pd.DataFrame((self.mi_cipher).values())
+        self.df_mi_cipher = pd.DataFrame((self.mi_cipher).values())
         
         # compute which pairwise secrets are in dec target:
         # only edge between an online client and an offline client
         online_set = set(self.user_vectors.keys())    
         offline_set = set(self.users) - set(online_set)
-        if __debug__:
-            self.logger.info(f"online clients: {len(online_set)}")
-            self.logger.info(f"offline clients: {len(offline_set)}")
+        if __debug__: self.logger.info(f"online clients: {len(online_set)}")
 
-        
-        """Compute partial sum."""
+        # Compute partial sum.
         self.vec_sum_partial = np.zeros(self.vector_len, dtype=self.vector_dtype)
         for id in self.user_vectors:
             if len(self.user_vectors[id]) != self.vector_len:
@@ -376,15 +354,14 @@ class SA_ServiceAgent(Agent):
                     else:                       # id == nb
                         raise RuntimeError("id should not be its own neighbor.")
 
-        
-        self.report_clear_pool()
-
         msg_to_sign = dill.dumps(offline_set)
         hash_container = SHA256.new(msg_to_sign)
         signer = DSS.new(self.server_key, 'fips-186-3')
         signature = signer.sign(hash_container)
-        labels_and_sig = (msg_to_sign, signature)
+        self.labels_and_sig = (msg_to_sign, signature)
 
+    # TODO pack the send message in a report package, and then serialize it
+    def report_send_message(self):
         # Should send only the c1 component of the ciphertext to the committee
         cnt = 0
         for id in self.user_committee:
@@ -392,12 +369,25 @@ class SA_ServiceAgent(Agent):
                              Message({"msg": "SIGN",
                                       "iteration": self.current_iteration,
                                       "dec_target_pairwise": self.dec_target_pairwise,
-                                      "dec_target_mi": df_mi_cipher[cnt],
-                                      "client_id_list": client_id_list,
-                                      "labels": labels_and_sig,
+                                      "dec_target_mi": self.df_mi_cipher[cnt],
+                                      "client_id_list": self.client_id_list,
+                                      "labels": self.labels_and_sig,
                                       }),
                              tag="comm_dec_server")
             cnt += 1
+    
+    def report(self, currentTime):
+        """Process masked vectors.
+            Server at this point should receive:
+            vectors, encryption of mi shares, encryption of h_ijt
+        """
+
+        dt_protocol_start = pd.Timestamp('now')
+
+        self.report_read_from_pool()
+        self.report_process()
+        self.report_clear_pool()
+        self.report_send_message()
         
         server_comp_delay = pd.Timestamp('now') - dt_protocol_start
         self.agent_print("run time for report step:", server_comp_delay)
@@ -406,13 +396,13 @@ class SA_ServiceAgent(Agent):
         self.recordTime(dt_protocol_start, "REPORT")
         
         # print serialization size:
-        if __debug__:
-            self.logger.info(f"[Server] communication for collecting vectors: {len(dill.dumps(self.user_vectors))}")
+        # if __debug__:
+        #     self.logger.info(f"communication for collecting vectors: {len(dill.dumps(self.user_vectors))}")
 
-            tmp_dic = {}
-            for tpl in self.dec_target_pairwise:
-                tmp_dic[tpl] = (int(self.dec_target_pairwise[tpl][0].x), int(self.dec_target_pairwise[tpl][0].y))
-            self.logger.info(f"[Server] communication for signed labels and messages to decrypt: {len(dill.dumps(tmp_dic))}")
+        #     tmp_dic = {}
+        #     for tpl in self.dec_target_pairwise:
+        #         tmp_dic[tpl] = (int(self.dec_target_pairwise[tpl][0].x), int(self.dec_target_pairwise[tpl][0].y))
+        #     self.logger.info(f"communication for signed labels and messages to decrypt: {len(dill.dumps(tmp_dic))}")
 
         self.current_round = 2
         
