@@ -443,6 +443,10 @@ class SA_ServiceAgent(Agent):
         self.recordTime(dt_protocol_start, "CROSSCHECK")
 
     def reconstruction_read_from_pool(self):
+        # if not enough shares received, wait for 0.1 sec
+        if len(self.recv_committee_shares_pairwise) < self.committee_threshold:
+            time.sleep(0.1)
+
         self.committee_shares_pairwise = self.recv_committee_shares_pairwise
         self.recv_committee_shares_pairwise = {}
 
@@ -463,28 +467,8 @@ class SA_ServiceAgent(Agent):
         self.recv_pairwise_cipher = {}
         self.recv_mi_cipher = {}
         self.recv_user_vectors = {}
-        
-    def reconstruction(self, currentTime):
-        """Reconstruct sum."""
-        
-        # print serialization cost
-        tmp_msg_pairwise = {}
-        for i in self.recv_committee_shares_pairwise:
-            tmp_msg_pairwise[i] = {}
-            for j in range (len(self.recv_committee_shares_pairwise[i])):
-                tmp_msg_pairwise[i][j] = (int((self.recv_committee_shares_pairwise[i][j]).x), int(self.recv_committee_shares_pairwise[i][j].y))
-        
-        if __debug__:
-            self.logger.info(f"communication for received decryption shares: {len(dill.dumps(self.recv_committee_shares_mi))+len(dill.dumps(tmp_msg_pairwise))}")
-        
-        dt_protocol_start = pd.Timestamp('now')
-
-        # if not enough shares received, wait for 0.1 sec
-        if len(self.recv_committee_shares_pairwise) < self.committee_threshold:
-            time.sleep(0.1)
-
-        self.reconstruction_read_from_pool()
-       
+    
+    def reconstruction_process(self):
         self.agent_print("number of collected shares from decryptors:", len(self.committee_shares_pairwise))
         if len(self.committee_shares_pairwise) < self.committee_threshold:
             raise RuntimeError("No enough shares for decryption received.")
@@ -594,7 +578,36 @@ class SA_ServiceAgent(Agent):
         
         self.agent_print("final sum:", self.final_sum)
 
+    def reconstruction_send_message(self):
+        # Send the result back to each client.
+        for id in self.users:
+            self.sendMessage(id,
+                             Message({"msg": "REQ",
+                                      "sender": 0,
+                                      "output": 1,  # For machine learning, should be current model weights
+                                      }),
+                             tag="comm_output_server")
+
+        
+    def reconstruction(self, currentTime):
+        """Reconstruct sum."""
+        
+        # print serialization cost
+        # tmp_msg_pairwise = {}
+        # for i in self.recv_committee_shares_pairwise:
+        #     tmp_msg_pairwise[i] = {}
+        #     for j in range (len(self.recv_committee_shares_pairwise[i])):
+        #         tmp_msg_pairwise[i][j] = (int((self.recv_committee_shares_pairwise[i][j]).x), int(self.recv_committee_shares_pairwise[i][j].y))
+        
+        # if __debug__:
+        #     self.logger.info(f"communication for received decryption shares: {len(dill.dumps(self.recv_committee_shares_mi))+len(dill.dumps(tmp_msg_pairwise))}")
+        
+        dt_protocol_start = pd.Timestamp('now')
+
+        self.reconstruction_read_from_pool()
+        self.reconstruction_process()
         self.reconstruction_clear_pool()
+        self.reconstruction_send_message()
        
         server_comp_delay = pd.Timestamp('now') - dt_protocol_start
         self.agent_print("run time for reconstruction step:", server_comp_delay)
@@ -606,16 +619,7 @@ class SA_ServiceAgent(Agent):
         print("######## Iteration completion ########")
         print(f"[Server] finished iteration {self.current_iteration} at {currentTime + server_comp_delay}")
         print()
-
-        # Send the result back to each client.
-        for id in self.users:
-            self.sendMessage(id,
-                             Message({"msg": "REQ",
-                                      "sender": 0,
-                                      "output": 1,  # For machine learning, should be current model weights
-                                      }),
-                             tag="comm_output_server")
-
+        
         self.current_round = 1
 
         # End of the iteration
