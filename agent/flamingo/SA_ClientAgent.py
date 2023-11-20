@@ -55,15 +55,14 @@ class SA_ClientAgent(Agent):
 
 
         """Read keys."""
+        # Read system-wide pk
+        self.system_pk = util.read_pk(f"pki_files/system_pk.pem")
+        
         # sk is used to establish pairwise secret with neighbors' public keys
-        hdr = f"pki_files/client{self.id}.pem"
-        self.key = util.read_key(hdr)
+        self.key = util.read_key(f"pki_files/client{self.id}.pem")
         self.secret_key = self.key.d
         
-        # Read system-wide pk
-        hdr = f"pki_files/system_pk.pem"
-        self.system_pk = util.read_pk(hdr)
-
+        
         """Set parameters."""
         self.num_clients = num_clients
         self.neighborhood_size = neighborhood_size
@@ -76,7 +75,9 @@ class SA_ClientAgent(Agent):
 
 
         """Select committee."""
-        self.user_committee = param.choose_committee(param.root_seed, param.committee_size, self.num_clients)
+        self.user_committee = param.choose_committee(param.root_seed, 
+                                                     param.committee_size, 
+                                                     self.num_clients)
         self.committee_shared_sk = None
         self.committee_member_idx = None
 
@@ -85,19 +86,15 @@ class SA_ClientAgent(Agent):
         self.symmetric_keys = {}
         if self.id in self.user_committee:
             for i in range(num_clients):
-                hdr = f"pki_files/client{i}.pem"
-                pk = util.read_pk(hdr)
-
+                pk = util.read_pk(f"pki_files/client{i}.pem")
                 self.symmetric_keys[i] = pk * self.secret_key  # group 
                 self.symmetric_keys[i] = (int(self.symmetric_keys[i].x) & ((1<<128)-1)).to_bytes(16, 'big') # bytes
-
 
         # Accumulate this client's run time information by step.
         self.elapsed_time = {'REPORT': pd.Timedelta(0),
                              'CROSSCHECK': pd.Timedelta(0),
                              'RECONSTRUCTION': pd.Timedelta(0),
                              }
-
 
         # Iteration counter
         self.no_of_iterations = iterations
@@ -154,7 +151,6 @@ class SA_ClientAgent(Agent):
 
         # with signatures of other clients from the server
         if msg.body['msg'] == "COMMITTEE_SHARED_SK":
-            dt_protocol_start = pd.Timestamp('now')
             self.committee_shared_sk = msg.body['sk_share']
             self.committee_member_idx = msg.body['committee_member_idx']
 
@@ -173,10 +169,9 @@ class SA_ClientAgent(Agent):
                     if __debug__: self.logger.info("did not recv sign")
                 else:
                     if self.cipher_stored.body['iteration'] == self.current_iteration:
-                        self.decryptSendShares(currentTime, 
-                            self.cipher_stored.body['dec_target_pairwise'], 
-                            self.cipher_stored.body['dec_target_mi'], 
-                            self.cipher_stored.body['client_id_list'])
+                        self.decryptSendShares(util.deserialize_dim1_elgamal(self.cipher_stored.body['dec_target_pairwise']), 
+                                               util.deserialize_tuples_bytes(self.cipher_stored.body['dec_target_mi']), 
+                                               self.cipher_stored.body['client_id_list'])
                     
                 self.cipher_stored = None
                 self.recordTime(dt_protocol_start, 'RECONSTRUCTION')
@@ -193,7 +188,6 @@ class SA_ClientAgent(Agent):
                 return
 
             dt_protocol_start = pd.Timestamp('now')
-
             self.sendVectors(currentTime)
             self.recordTime(dt_protocol_start, "REPORT")
  
@@ -215,9 +209,7 @@ class SA_ClientAgent(Agent):
         # Client index starting frrom 0
         neighbor_pubkeys = {}
         for id in self.neighbors_list:
-            hdr = f"pki_files/client{id}.pem"
-            neighbor_pubkeys[id] = util.read_pk(hdr)
-        
+            neighbor_pubkeys[id] = util.read_pk(f"pki_files/client{id}.pem")
 
         # send symmetric encryption of shares of mi  
         mi_bytes = get_random_bytes(self.key_length) 
@@ -229,8 +221,7 @@ class SA_ClientAgent(Agent):
 
         committee_pubkeys = {}
         for id in self.user_committee:
-            hdr = f"pki_files/client{id}.pem"
-            committee_pubkeys[id] = util.read_pk(hdr)
+            committee_pubkeys[id] = util.read_pk(f"pki_files/client{id}.pem")
             
 
         # separately encrypt each share
@@ -251,7 +242,6 @@ class SA_ClientAgent(Agent):
             tmp, _ = per_share_encryptor.encrypt_and_digest(per_share_bytes)
             enc_mi_shares.append((tmp, nonce))
             cnt += 1
-
 
         # Compute mask, compute masked vector
         # PRG individual mask
@@ -301,7 +291,6 @@ class SA_ClientAgent(Agent):
             hash_object = SHA256.new(data=(px+py))
             neighbor_pairwise_mask_seed_bytes[id] = hash_object.digest()[0:self.key_length]
           
-        
         prg_pairwise = {}
         for id in self.neighbors_list:
             prg_pairwise_holder = ChaCha20.new(key=neighbor_pairwise_mask_seed_bytes[id], nonce=param.nonce)
@@ -348,28 +337,18 @@ class SA_ClientAgent(Agent):
             self.logger.info(f"client {self.id} sends vector at {currentTime + client_comp_delay}")
         
         # Send the vector to the server
-        
         self.sendMessage(self.serviceAgentID,
                          Message({"msg": "VECTOR",
                                   "iteration": self.current_iteration,
                                   "sender": self.id,
                                   "vector": vec,
-                                  "enc_mi_shares": enc_mi_shares,
-                                  "enc_pairwise": cipher_msg,
+                                  "enc_mi_shares": util.serialize_tuples_bytes(enc_mi_shares),
+                                  "enc_pairwise": util.serialize_dim1_elgamal(cipher_msg),
                                   }),
                          tag="comm_key_generation")
 
-        # print serialization size
-        if __debug__:
-            tmp_cipher_pairwise = {}
-            for i in cipher_msg:
-                tmp_cipher_pairwise[i] = (int(cipher_msg[i][0].x), int(cipher_msg[i][0].y),
-                                        int(cipher_msg[i][1].x), int(cipher_msg[i][1].y))
-        
-            self.logger.info(f"[Client] communication for vectors at report step: {len(dill.dumps(vec)) + len(dill.dumps(enc_mi_shares)) + len(dill.dumps(tmp_cipher_pairwise))}")
-        
+  
     def signSendLabels(self, currentTime, msg_to_sign):
-        dt_protocol_start = pd.Timestamp('now')
 
         msg_to_sign = dill.dumps(msg_to_sign)
         hash_container = SHA256.new(msg_to_sign)
@@ -386,12 +365,9 @@ class SA_ClientAgent(Agent):
                                   "signed_labels": client_signed_labels,
                                   }),
                         tag="comm_sign_client")
+  
 
-        if __debug__:
-            self.logger.info(f"[Decryptor] communication for crosscheck step: {len(dill.dumps(client_signed_labels))}")
-        
-
-    def decryptSendShares(self, currentTime, dec_target_pairwise, dec_target_mi, client_id_list):
+    def decryptSendShares(self, dec_target_pairwise, dec_target_mi, client_id_list):
         
         dt_protocol_start = pd.Timestamp('now')
         
@@ -438,7 +414,6 @@ class SA_ClientAgent(Agent):
             plaintext = int.from_bytes(plaintext, 'big')
             dec_shares_mi.append(plaintext)
             cnt += 1
-
         
         clt_comp_delay = pd.Timestamp('now') - dt_protocol_start
 
@@ -449,19 +424,11 @@ class SA_ClientAgent(Agent):
                          Message({"msg": "SHARED_RESULT",
                                   "iteration": self.current_iteration,
                                   "sender": self.id,
-                                  "shared_result_pairwise": dec_shares_pairwise,
-                                  "shared_result_mi": dec_shares_mi,
+                                  "shared_result_pairwise": util.serialize_dim1_ecp(dec_shares_pairwise),
+                                  "shared_result_mi": util.serialize_dim1_list(dec_shares_mi),
                                   "committee_member_idx": self.committee_member_idx,
                                   }),
                          tag="comm_secret_sharing")
-
-        # print serialization cost
-        if __debug__:
-            tmp_msg_pairwise = {}
-            for i in range (len(dec_shares_pairwise)):
-                tmp_msg_pairwise[i] = (int(dec_shares_pairwise[i].x), int(dec_shares_pairwise[i].y))
-            
-            self.logger.info(f"[Decryptor] communication for reconstruction step: {len(dill.dumps(dec_shares_mi))+len(dill.dumps(tmp_msg_pairwise))}")
 
 
     def elgamal_enc_group(self, system_pk, ptxt_point):

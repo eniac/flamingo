@@ -1,3 +1,4 @@
+import json
 import numpy as np
 import pandas as pd
 from contextlib import contextmanager
@@ -173,3 +174,80 @@ def read_pk(file_name):
 def read_sk(file_name):
     key = read_key(file_name)
     return key.d
+
+
+def serialize_dim2_ecp(ecp_dict):
+    msg = {}
+    for i in ecp_dict:
+        msg[i] = {}
+        for j in range(len(ecp_dict[i])):
+            msg[i][j] = (int((ecp_dict[i][j]).x), int(ecp_dict[i][j].y))
+        
+    json_string = json.dumps(msg)
+    # byte_count = len(json_string.encode('utf-8'))
+    return json_string
+        
+def deserialize_dim2_ecp(json_string):
+    ecp_dict = {}
+    msg = json.loads(json_string)
+        
+    for i in msg:
+        tmp_list = []
+        for j in msg[i]:
+            x = msg[i][j][0]
+            y = msg[i][j][1]
+            tmp_list.append(ECC.EccPoint(x, y))
+        ecp_dict[i] = tmp_list
+    return ecp_dict
+    
+def serialize_dim1_ecp(ecp_list):
+    msg = {}
+    for i in range (len(ecp_list)):
+        msg[i] = (int(ecp_list[i].x), int(ecp_list[i].y))
+
+    json_string = json.dumps(msg)
+    # byte_count = len(json_string.encode('utf-8'))
+    return json_string
+    
+def deserialize_dim1_ecp(json_string):
+    ecp_list = []
+    msg = json.loads(json_string)
+    for i in msg:
+        x = msg[i][0]
+        y = msg[i][1]
+        ecp_list.append(ECC.EccPoint(x, y))
+    return ecp_list
+    
+def serialize_dim1_elgamal(elgamal_dict):
+    msg = {}
+    for i in elgamal_dict:
+        json_tuple = json.dumps(i)
+        msg[json_tuple] = (int(elgamal_dict[i][0].x), int(elgamal_dict[i][0].y), 
+                           int(elgamal_dict[i][1].x), int(elgamal_dict[i][1].y))
+    json_string = json.dumps(msg)
+    return json_string
+
+def deserialize_dim1_elgamal(json_string):
+    elgamal_dict = {}
+    msg = json.loads(json_string)
+    for i in msg:
+        elgamal_tuple = tuple(json.loads(i))
+        elgamal_dict[elgamal_tuple] = (ECC.EccPoint(msg[i][0], msg[i][1]), 
+                                       ECC.EccPoint(msg[i][2], msg[i][3]))
+    return elgamal_dict
+
+def serialize_tuples_bytes(list_of_tuples):
+    serialized_list_of_tuples = [(item[0].hex(), item[1].hex()) for item in list_of_tuples]
+    json_string = json.dumps(serialized_list_of_tuples)
+    return json_string
+
+def deserialize_tuples_bytes(json_string):
+    deserialized_list_of_tuples = [(bytes.fromhex(item[0]), bytes.fromhex(item[1])) for item in json.loads(json_string)]
+    return deserialized_list_of_tuples
+
+def serialize_dim1_list(ls):
+    return json.dumps(ls)
+
+def deserialize_dim1_list(json_string):
+    return json.loads(json_string)
+

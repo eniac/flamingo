@@ -3,6 +3,7 @@ from message.Message import Message
 
 import multiprocessing
 import dill
+import json
 import time
 import logging
 
@@ -78,7 +79,7 @@ class SA_ServiceAgent(Agent):
         self.prime = ecchash.n
         self.key_length = key_length
         self.neighborhood_size = neighborhood_size
-
+        self.committee_threshold = 0
 
         # Read keys.
         self.server_key = util.read_key("pki_files/server_key.pem")
@@ -89,14 +90,6 @@ class SA_ServiceAgent(Agent):
                              'CROSSCHECK': pd.Timedelta(0),
                              'RECONSTRUCTION': pd.Timedelta(0),
                              }
-
-        
-        # Setup committee (decryptors).
-        self.user_committee = param.choose_committee(param.root_seed, 
-                                                     param.committee_size, 
-                                                     self.num_clients)
-        self.committee_threshold = int(param.fraction * len(self.user_committee))
-
         
         # Initialize pools.
         self.user_vectors = {}
@@ -109,6 +102,7 @@ class SA_ServiceAgent(Agent):
         self.recv_mi_cipher = {}
         self.recv_recon_index = {}
 
+        self.user_committee = {}
         self.committee_shares_pairwise = {} 
         self.committee_shares_mi = {}
         self.committee_sigs = {}
@@ -216,10 +210,10 @@ class SA_ServiceAgent(Agent):
                 self.recv_user_vectors[sender_id] = msg.body['vector']
                 
                 # parse cipher for shares of mi
-                self.recv_mi_cipher[sender_id] = msg.body['enc_mi_shares']
+                self.recv_mi_cipher[sender_id] = util.deserialize_tuples_bytes(msg.body['enc_mi_shares'])
 
                 # parse the cipher for pairwise mask 
-                cur_clt_pairwise_cipher = msg.body['enc_pairwise']
+                cur_clt_pairwise_cipher = util.deserialize_dim1_elgamal(msg.body['enc_pairwise'])
 
                 # update pairwise cipher
                 for d in (self.recv_pairwise_cipher, cur_clt_pairwise_cipher): 
@@ -244,20 +238,11 @@ class SA_ServiceAgent(Agent):
                     
             if msg.body['iteration'] == self.current_iteration:
                 
-                self.recv_committee_shares_pairwise[sender_id] = msg.body['shared_result_pairwise']
-                self.recv_committee_shares_mi[sender_id] = msg.body['shared_result_mi']
+                self.recv_committee_shares_pairwise[sender_id] = util.deserialize_dim1_ecp(msg.body['shared_result_pairwise'])
+                self.recv_committee_shares_mi[sender_id] = util.deserialize_dim1_list(msg.body['shared_result_mi'])
                 self.recv_recon_index[sender_id] = msg.body['committee_member_idx']
                 
-                # print serialization cost
-                # tmp_msg_pairwise = {}
-                # for i in self.recv_committee_shares_pairwise:
-                #     tmp_msg_pairwise[i] = {}
-                #     for j in range (len(self.recv_committee_shares_pairwise[i])):
-                #         tmp_msg_pairwise[i][j] = (int((self.recv_committee_shares_pairwise[i][j]).x), int(self.recv_committee_shares_pairwise[i][j].y))
-        
-                # if __debug__:
-                #     self.logger.info(f"communication for received decryption shares: {len(dill.dumps(self.recv_committee_shares_mi))+len(dill.dumps(tmp_msg_pairwise))}") 
-
+                # self.logger.info(f"communication for received decryption shares: {comm}") 
             else:
                 if __debug__:
                     self.logger.info(f"LATE MSG: Server receives SHARED_RESULT from iteration {msg.body['iteration']} client {msg.body['sender']}")
@@ -266,10 +251,18 @@ class SA_ServiceAgent(Agent):
     # Processing and replying the messages.
     def initialize(self, currentTime):
         dt_protocol_start = pd.Timestamp('now')
+
+        # Setup committee (decryptors).
+        self.user_committee = param.choose_committee(param.root_seed, 
+                                                     param.committee_size, 
+                                                     self.num_clients)
+        self.committee_threshold = int(param.fraction * len(self.user_committee))
       
         # Simulate the Shamir share of SK at each decryptor
         sk_shares = secret_int_to_points(secret_int=self.system_sk, 
-            point_threshold=self.committee_threshold, num_points=len(self.user_committee), prime=self.prime)
+                                         point_threshold=self.committee_threshold, 
+                                         num_points=len(self.user_committee), 
+                                         prime=self.prime)
 
         # Send shared sk to committee members
         if __debug__: self.logger.info(f"Server sends to committee members:, {self.user_committee}")
@@ -368,7 +361,11 @@ class SA_ServiceAgent(Agent):
             # TODO OPTMIZATION: store neighbors to reduce time
             # find neighbors for client id
             # client id is from 0
-            clt_neighbors_list = param.findNeighbors(param.root_seed, self.current_iteration, self.num_clients, id, self.neighborhood_size)
+            clt_neighbors_list = param.findNeighbors(param.root_seed, 
+                                                     self.current_iteration, 
+                                                     self.num_clients, 
+                                                     id, 
+                                                     self.neighborhood_size)
 
             for nb in clt_neighbors_list:       # for all neighbors of this client                
                 if nb in online_set:            # if this client id's neighbor nb is online 
@@ -388,7 +385,6 @@ class SA_ServiceAgent(Agent):
         signature = signer.sign(hash_container)
         self.labels_and_sig = (msg_to_sign, signature)
 
-    # TODO pack the send message in a report package, and then serialize it
     def report_send_message(self):
         # Should send only the c1 component of the ciphertext to the committee
         cnt = 0
@@ -396,23 +392,13 @@ class SA_ServiceAgent(Agent):
             self.sendMessage(id,
                              Message({"msg": "SIGN",
                                       "iteration": self.current_iteration,
-                                      "dec_target_pairwise": self.dec_target_pairwise,
-                                      "dec_target_mi": self.df_mi_cipher[cnt],
+                                      "dec_target_pairwise": util.serialize_dim1_elgamal(self.dec_target_pairwise),
+                                      "dec_target_mi": util.serialize_tuples_bytes(self.df_mi_cipher[cnt]),
                                       "client_id_list": self.client_id_list,
                                       "labels": self.labels_and_sig,
                                       }),
                              tag="comm_dec_server")
             cnt += 1
-
-        # print serialization size:
-        # if __debug__:
-        #     self.logger.info(f"communication for collecting vectors: {len(dill.dumps(self.user_vectors))}")
-
-        #     tmp_dic = {}
-        #     for tpl in self.dec_target_pairwise:
-        #         tmp_dic[tpl] = (int(self.dec_target_pairwise[tpl][0].x), int(self.dec_target_pairwise[tpl][0].y))
-        #     self.logger.info(f"communication for signed labels and messages to decrypt: {len(dill.dumps(tmp_dic))}")
-
 
     def forward_signatures(self, currentTime):
         """Forward cross check information for decryptors."""
@@ -484,6 +470,10 @@ class SA_ServiceAgent(Agent):
         # if not enough shares received, wait for 0.1 sec
         if len(self.recv_committee_shares_pairwise) < self.committee_threshold:
             time.sleep(0.1)
+
+        # TEST
+        # _, json_string = self.serialize_dim2_ecp(self.recv_committee_shares_pairwise)
+        # self.recv_committee_shares_pairwise = self.deserialize_dim2_ecp(json_string)
 
         self.committee_shares_pairwise = self.recv_committee_shares_pairwise
         self.recv_committee_shares_pairwise = {}
