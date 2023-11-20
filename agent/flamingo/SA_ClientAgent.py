@@ -305,7 +305,7 @@ class SA_ClientAgent(Agent):
         prg_pairwise = {}
         for id in self.neighbors_list:
             prg_pairwise_holder = ChaCha20.new(key=neighbor_pairwise_mask_seed_bytes[id], nonce=param.nonce)
-            data = b"secr" * self.vector_len
+            data = param.fixed_key * self.vector_len
             prg_pairwise[id] = prg_pairwise_holder.encrypt(data)
         
         """Client inputs.

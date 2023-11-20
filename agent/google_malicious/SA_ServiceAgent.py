@@ -312,6 +312,8 @@ class SA_ServiceAgent(Agent):
         self.recv_user_pubkeys = {}
     
     def advertise_keys_clear_pool(self):
+        # Empty the pool for upcoming messages 
+        # before server sends requests
         self.recv_user_choice = {}
 
     def advertise_keys(self, currentTime):

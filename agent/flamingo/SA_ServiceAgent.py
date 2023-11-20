@@ -81,11 +81,8 @@ class SA_ServiceAgent(Agent):
 
 
         # Read keys.
-        hdr = "pki_files/server_key.pem"
-        self.server_key = util.read_key(hdr)
-
-        hdr = "pki_files/system_pk.pem"
-        self.system_sk = util.read_sk(hdr)
+        self.server_key = util.read_key("pki_files/server_key.pem")
+        self.system_sk = util.read_sk("pki_files/system_pk.pem")
 
         # agent accumulation of elapsed times by category of tasks
         self.elapsed_time = {'REPORT': pd.Timedelta(0),
@@ -130,14 +127,14 @@ class SA_ServiceAgent(Agent):
 
         # Map the message processing functions
         self.aggProcessingMap = {
-            0: self.initFunc,
+            0: self.initialize,
             1: self.report,
             2: self.forward_signatures,
             3: self.reconstruction,
         }
 
         self.namedict = {
-            0: "initFunc",
+            0: "initialize",
             1: "report",
             2: "forward_signatures",
             3: "reconstruction",
@@ -251,13 +248,23 @@ class SA_ServiceAgent(Agent):
                 self.recv_committee_shares_mi[sender_id] = msg.body['shared_result_mi']
                 self.recv_recon_index[sender_id] = msg.body['committee_member_idx']
                 
+                # print serialization cost
+                # tmp_msg_pairwise = {}
+                # for i in self.recv_committee_shares_pairwise:
+                #     tmp_msg_pairwise[i] = {}
+                #     for j in range (len(self.recv_committee_shares_pairwise[i])):
+                #         tmp_msg_pairwise[i][j] = (int((self.recv_committee_shares_pairwise[i][j]).x), int(self.recv_committee_shares_pairwise[i][j].y))
+        
+                # if __debug__:
+                #     self.logger.info(f"communication for received decryption shares: {len(dill.dumps(self.recv_committee_shares_mi))+len(dill.dumps(tmp_msg_pairwise))}") 
+
             else:
                 if __debug__:
                     self.logger.info(f"LATE MSG: Server receives SHARED_RESULT from iteration {msg.body['iteration']} client {msg.body['sender']}")
 
     
     # Processing and replying the messages.
-    def initFunc(self, currentTime):
+    def initialize(self, currentTime):
         dt_protocol_start = pd.Timestamp('now')
       
         # Simulate the Shamir share of SK at each decryptor
@@ -282,8 +289,29 @@ class SA_ServiceAgent(Agent):
         server_comp_delay = pd.Timestamp('now') - dt_protocol_start
         self.setWakeup(currentTime + server_comp_delay + pd.Timedelta('2s'))
 
+
+    def report(self, currentTime):
+        """Process masked vectors.
+            Server at this point should receive:
+            vectors, encryption of mi shares, encryption of h_ijt
+        """
+
+        dt_protocol_start = pd.Timestamp('now')
+
+        self.report_read_from_pool()
+        self.report_process()
+        self.report_clear_pool()
+        self.report_send_message()
+        
+        server_comp_delay = pd.Timestamp('now') - dt_protocol_start
+        self.agent_print("run time for report step:", server_comp_delay)
+
         # Accumulate into time log.
-        # self.recordTime(dt_protocol_start, "INIT")
+        self.recordTime(dt_protocol_start, "REPORT")
+        
+        self.current_round = 2
+        
+        self.setWakeup(currentTime + server_comp_delay + param.wt_flamingo_crosscheck)
 
     def report_read_from_pool(self):
         # assign user vectors to a new var. empty user vectors immediately.
@@ -299,7 +327,7 @@ class SA_ServiceAgent(Agent):
         self.recv_pairwise_cipher = {}
 
     def report_clear_pool(self):
-        # Empty the pool for those upcoming messages before server send requests
+        # Empty the pool for those upcoming messages before server sends requests
         self.recv_committee_shares_mi = {}
         self.recv_committee_shares_pairwise = {}
         self.recv_recon_index = {}
@@ -375,26 +403,7 @@ class SA_ServiceAgent(Agent):
                                       }),
                              tag="comm_dec_server")
             cnt += 1
-    
-    def report(self, currentTime):
-        """Process masked vectors.
-            Server at this point should receive:
-            vectors, encryption of mi shares, encryption of h_ijt
-        """
 
-        dt_protocol_start = pd.Timestamp('now')
-
-        self.report_read_from_pool()
-        self.report_process()
-        self.report_clear_pool()
-        self.report_send_message()
-        
-        server_comp_delay = pd.Timestamp('now') - dt_protocol_start
-        self.agent_print("run time for report step:", server_comp_delay)
-
-        # Accumulate into time log.
-        self.recordTime(dt_protocol_start, "REPORT")
-        
         # print serialization size:
         # if __debug__:
         #     self.logger.info(f"communication for collecting vectors: {len(dill.dumps(self.user_vectors))}")
@@ -404,18 +413,6 @@ class SA_ServiceAgent(Agent):
         #         tmp_dic[tpl] = (int(self.dec_target_pairwise[tpl][0].x), int(self.dec_target_pairwise[tpl][0].y))
         #     self.logger.info(f"communication for signed labels and messages to decrypt: {len(dill.dumps(tmp_dic))}")
 
-        self.current_round = 2
-        
-        self.setWakeup(currentTime + server_comp_delay + param.wt_flamingo_crosscheck)
-
-    def forward_signatures_read_from_pool(self):
-        self.committee_sigs = self.recv_committee_sigs
-        self.recv_committee_shares_mi = {}
-    
-    def forward_signatures_clear_pool(self):
-        # Empty the pool for those upcoming messages before server send requests
-        self.recv_committee_shares_pairwise = {}
-        self.recv_recon_index = {}
 
     def forward_signatures(self, currentTime):
         """Forward cross check information for decryptors."""
@@ -424,14 +421,7 @@ class SA_ServiceAgent(Agent):
 
         self.forward_signatures_read_from_pool()
         self.forward_signatures_clear_pool()
-
-        for id in self.user_committee:
-            self.sendMessage(id,
-                             Message({"msg": "DEC",
-                                      "iteration": self.current_iteration,
-                                      "labels": self.committee_sigs,
-                                      }),
-                             tag="comm_sign_server")
+        self.forward_signatures_send_message()
         
         self.current_round = 3
 
@@ -442,6 +432,54 @@ class SA_ServiceAgent(Agent):
         # Accumulate into time log.
         self.recordTime(dt_protocol_start, "CROSSCHECK")
 
+    def forward_signatures_read_from_pool(self):
+        self.committee_sigs = self.recv_committee_sigs
+        self.recv_committee_shares_mi = {}
+    
+    def forward_signatures_clear_pool(self):
+        # Empty the pool for those upcoming messages before server sends requests
+        self.recv_committee_shares_pairwise = {}
+        self.recv_recon_index = {}
+
+    def forward_signatures_send_message(self):
+        for id in self.user_committee:
+            self.sendMessage(id,
+                             Message({"msg": "DEC",
+                                      "iteration": self.current_iteration,
+                                      "labels": self.committee_sigs,
+                                      }),
+                             tag="comm_sign_server")
+
+    def reconstruction(self, currentTime):
+        """Reconstruct sum."""
+        
+        dt_protocol_start = pd.Timestamp('now')
+
+        self.reconstruction_read_from_pool()
+        self.reconstruction_process()
+        self.reconstruction_clear_pool()
+        self.reconstruction_send_message()
+       
+        server_comp_delay = pd.Timestamp('now') - dt_protocol_start
+        self.agent_print("run time for reconstruction step:", server_comp_delay)
+        
+        # Accumulate into time log.
+        self.recordTime(dt_protocol_start, "RECONSTRUCTION")
+        
+        print()
+        print("######## Iteration completion ########")
+        print(f"[Server] finished iteration {self.current_iteration} at {currentTime + server_comp_delay}")
+        print()
+        
+        self.current_round = 1
+
+        # End of the iteration
+        self.current_iteration += 1
+        if (self.current_iteration > self.no_of_iterations):
+            return
+
+        self.setWakeup(currentTime + server_comp_delay + param.wt_flamingo_report)
+   
     def reconstruction_read_from_pool(self):
         # if not enough shares received, wait for 0.1 sec
         if len(self.recv_committee_shares_pairwise) < self.committee_threshold:
@@ -462,7 +500,7 @@ class SA_ServiceAgent(Agent):
         self.committee_shares_mi = {}
         self.recon_index = {}
 
-        # Empty the pool for those upcoming messages before server send requests
+        # Empty the pool for those upcoming messages before server sends requests
         self.user_masked_input = {}
         self.recv_pairwise_cipher = {}
         self.recv_mi_cipher = {}
@@ -566,7 +604,7 @@ class SA_ServiceAgent(Agent):
 
             for i in range(len(sum_df)):
                 prg_pairwise_holder = ChaCha20.new(key=sum_df[0][i], nonce=param.nonce)
-                data = b"secr" * self.vector_len
+                data = param.fixed_key * self.vector_len
                 prg_pairwise[i] = prg_pairwise_holder.encrypt(data)
                 
                 if recon_symbol_list[i] == 1:
@@ -589,46 +627,6 @@ class SA_ServiceAgent(Agent):
                              tag="comm_output_server")
 
         
-    def reconstruction(self, currentTime):
-        """Reconstruct sum."""
-        
-        # print serialization cost
-        # tmp_msg_pairwise = {}
-        # for i in self.recv_committee_shares_pairwise:
-        #     tmp_msg_pairwise[i] = {}
-        #     for j in range (len(self.recv_committee_shares_pairwise[i])):
-        #         tmp_msg_pairwise[i][j] = (int((self.recv_committee_shares_pairwise[i][j]).x), int(self.recv_committee_shares_pairwise[i][j].y))
-        
-        # if __debug__:
-        #     self.logger.info(f"communication for received decryption shares: {len(dill.dumps(self.recv_committee_shares_mi))+len(dill.dumps(tmp_msg_pairwise))}")
-        
-        dt_protocol_start = pd.Timestamp('now')
-
-        self.reconstruction_read_from_pool()
-        self.reconstruction_process()
-        self.reconstruction_clear_pool()
-        self.reconstruction_send_message()
-       
-        server_comp_delay = pd.Timestamp('now') - dt_protocol_start
-        self.agent_print("run time for reconstruction step:", server_comp_delay)
-        
-        # Accumulate into time log.
-        self.recordTime(dt_protocol_start, "RECONSTRUCTION")
-        
-        print()
-        print("######## Iteration completion ########")
-        print(f"[Server] finished iteration {self.current_iteration} at {currentTime + server_comp_delay}")
-        print()
-        
-        self.current_round = 1
-
-        # End of the iteration
-        self.current_iteration += 1
-        if (self.current_iteration > self.no_of_iterations):
-            return
-
-        self.setWakeup(currentTime + server_comp_delay + param.wt_flamingo_report)
-
 
 # ======================== UTIL ========================
 
