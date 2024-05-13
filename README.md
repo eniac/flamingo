@@ -31,7 +31,7 @@ bash Miniconda3-latest-Linux-x86_64.sh
 
 If you use bash, then run
 ```
-source ~/.bash_rc
+source ~/.bashrc
 ```
 
 Now create an environment with python 3.9.12 and then activate it.

@@ -46,7 +46,7 @@ class SA_ServiceAgent(Agent):
                  msg_fwd_delay=1000000,
                  round_time=pd.Timedelta("10s"),
                  iterations=4,
-                 num_clients=10,
+                 num_clients=128,
                  neighborhood_size=1,
                  parallel_mode=1,
                  debug_mode=0,
@@ -87,6 +87,8 @@ class SA_ServiceAgent(Agent):
 
         """ Set parameters. """
         # parties
+        if not param.assert_power_of_two(num_clients):
+            raise RuntimeError("Number of clients must be power of 2")
         self.num_clients = num_clients
         self.users = users  # the list of all user IDs
         

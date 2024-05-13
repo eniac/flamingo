@@ -140,6 +140,8 @@ class SA_ClientAgent(Agent):
 
 
         """ Set parameters. """
+        if not param.assert_power_of_two(num_clients):
+            raise RuntimeError("Number of clients must be power of 2")
         self.num_clients = num_clients
         self.neighborhood_size = neighborhood_size
         self.vector_len = input_length #param.vector_len
