@@ -76,7 +76,7 @@ NOTE: For ease of benchmarking, we separate the setup phase (folder `dkg`) and t
 
 ## Machine Learning Applications
 The code is in branch `fedlearn`.
-The machine learning model is a basic multi-layer perceptron classifier that can pull a variety of different datasets from the [pmlb website](https://epistasislab.github.io/pmlb/index.html). Users might wish to implement more complex models themselves.
+The machine learning model we use in this repository is a multi-layer perceptron classifier (`MLPClassfier` in `sklearn`) that can pull a variety of different datasets from the [pmlb website](https://epistasislab.github.io/pmlb/index.html). Users might wish to implement more complex models themselves.
 
 Beyond the aforementioned configs, we provide machine learning training configs below.
 ```
