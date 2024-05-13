@@ -68,6 +68,8 @@ class SA_ServiceAgent(Agent):
         self.parallel_mode = parallel_mode  # parallel
         
         # Input parameters.
+        if not param.assert_power_of_two(num_clients):
+            raise RuntimeError("Number of clients must be power of 2")
         self.num_clients = num_clients      # number of users per training round
         self.users = users                  # the list of user IDs
         self.vector_len = param.vector_len

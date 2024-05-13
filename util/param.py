@@ -31,6 +31,9 @@ wt_google_recontruction = pd.Timedelta('2s')
 root_seed = get_random_bytes(32) 
 nonce = b'\x00\x00\x00\x00\x00\x00\x00\x00'
 
+def assert_power_of_two(x):
+    return (math.ceil(math.log2(x)) == math.floor(math.log2(x)));
+    
 # choose committee members
 def choose_committee(root_seed, committee_size, num_clients):
     
