@@ -87,8 +87,6 @@ class SA_ServiceAgent(Agent):
 
         """ Set parameters. """
         # parties
-        if not param.assert_power_of_two(num_clients):
-            raise RuntimeError("Number of clients must be power of 2")
         self.num_clients = num_clients
         self.users = users  # the list of all user IDs
         

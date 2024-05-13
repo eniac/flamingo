@@ -97,7 +97,6 @@ dataset = args.dataset
 
 # Config parameter that causes util.util.print to suppress most output.
 util.silent_mode = not args.verbose
-
 num_clients = args.num_clients
 neighborhood_size = args.neighborhood_size
 round_time = args.round_time
@@ -105,6 +104,8 @@ num_iterations = args.num_iterations
 parallel_mode = args.parallel_mode
 debug_mode = args.debug_mode
 
+if not param.assert_power_of_two(num_clients):
+  raise ValueError("Number of clients must be power of 2")
 
 # split_size = args.split_size
 # max_logreg_iterations = args.max_logreg_iterations
