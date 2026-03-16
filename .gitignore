@@ -144,7 +144,7 @@ venv.bak/
 dmypy.json
 
 # Data
-.pem
+*.pem
 /log
 *.csv
 
