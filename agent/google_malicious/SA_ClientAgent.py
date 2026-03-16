@@ -45,6 +45,7 @@ class SA_ClientAgent(Agent):
                  num_neighbors=-1,
                  threshold=-1,
                  debug_mode=0,
+                 vector_len=None,
                  random_state=None):
 
         # Base class init.
@@ -74,7 +75,7 @@ class SA_ClientAgent(Agent):
         self.stored_shares_ai = {}
         self.stored_shares_mi = {}
 
-        self.vector_len = 1024
+        self.vector_len = vector_len if vector_len else param.vector_len
         self.vector_dtype = 'uint32'
         
 
@@ -83,7 +84,12 @@ class SA_ClientAgent(Agent):
 
         self.neighbors = set()
         self.neighbors_pubkeys = {}
-        self.num_choose = math.ceil(math.log2(self.num_clients))
+        # Number of outgoing neighbors each client chooses.
+        # Default (-1) uses ceil(log2(n)). Specify a higher value for more redundancy.
+        if num_neighbors > 0:
+            self.num_choose = num_neighbors
+        else:
+            self.num_choose = math.ceil(math.log2(self.num_clients))
         self.neighbors_out = set()
         self.neighbors_in = set()
         self.mi_bytes = None
@@ -177,8 +183,6 @@ class SA_ClientAgent(Agent):
 
     def receiveMessage(self, currentTime, msg):
         super().receiveMessage(currentTime, msg)
-
-        
         if msg.body['msg'] == "REQ_CHOICE":
             
             dt_protocol_start = pd.Timestamp('now')
@@ -514,5 +518,3 @@ class SA_ClientAgent(Agent):
     def recordTime(self, startTime, categoryName):
         dt_protocol_end = pd.Timestamp('now')
         self.elapsed_time[categoryName] += dt_protocol_end - startTime
-        self.setComputationDelay(
-            int((dt_protocol_end - startTime).to_timedelta64()))

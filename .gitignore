@@ -146,6 +146,7 @@ dmypy.json
 # Data
 .pem
 /log
+*.csv
 
 # Pyre type checker
 .pyre/

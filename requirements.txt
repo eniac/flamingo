@@ -1,4 +1,4 @@
-joblib==1.2.0
+joblib
 jsons
 cycler
 
@@ -12,17 +12,17 @@ scipy
 pandas
 matplotlib
 libnum
-kiwisolver==1.1.0
-pyparsing==2.4.0
-python-dateutil==2.8.0
-pytz==2019.1
+kiwisolver
+pyparsing
+python-dateutil
+pytz
 
-seaborn==0.9.0
-six==1.12.0
-tqdm==4.36.1
+seaborn
+six
+tqdm
 
-pynacl==1.5.0
-pycryptodomex==3.19.1
+pynacl
+pycryptodomex
 
 scikit-learn
 pmlb

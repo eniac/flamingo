@@ -46,8 +46,17 @@ parser.add_argument('-s', '--seed', type=int, default=None,
                     help='numpy.random.seed() for simulation')
 parser.add_argument('-v', '--verbose', action='store_true',
                     help='Maximum verbosity!')
-parser.add_argument('-d', '--debug_mode', type=bool, default=False, 
-                    help='print debug info')
+parser.add_argument('-d', '--debug_mode', type=int, default=0,
+                    help='print debug info (1=on, 0=off)')
+parser.add_argument('-w', '--wait_mode', type=str, default='fixed',
+                    choices=['fixed', 'adaptive'],
+                    help='Server waiting mode: "fixed" uses preconfigured timeouts, '
+                         '"adaptive" waits until enough messages arrive')
+parser.add_argument('-e', '--vector_len', type=int, default=None,
+                    help='Override input vector length (default: use param.vector_len)')
+parser.add_argument('--wait_threshold', type=float, default=0.9,
+                    help='Fraction of expected messages to trigger processing in adaptive mode '
+                         'for rounds 4-6 (default: 0.9). Rounds 1-3 always wait for all clients.')
 parser.add_argument('--config_help', action='store_true',
                     help='Print argument options for this config file')
 
@@ -85,12 +94,20 @@ np.random.seed(seed)
 util.silent_mode = not args.verbose
 
 num_clients = args.num_clients
-num_neighbors = args.num_neighbors
+# Default: 2 * ceil(log2(n)) outgoing neighbors for better dropout tolerance.
+# Original paper uses ceil(log2(n)) but that's tight with ~10% dropout.
+import math as _math
+num_neighbors = args.num_neighbors if args.num_neighbors > 0 else 4 * _math.ceil(_math.log2(num_clients))
 neighbor_threshold = args.neighbor_threshold
 round_time = args.round_time
 max_input = args.max_input
 num_iterations = args.num_iterations
 debug_mode = args.debug_mode
+wait_mode = args.wait_mode
+wait_threshold = args.wait_threshold
+
+if args.vector_len is not None:
+    param.vector_len = args.vector_len
 
 ### How many client agents will there be?   1000 in 125 subgraphs of 8 fits ln(n), for example
 # num_subgraphs = args.num_subgraphs
@@ -193,7 +210,10 @@ agents.extend([ ServiceAgent(
                 num_neighbors = num_neighbors,
                 neighbor_threshold = neighbor_threshold,
                 debug_mode = debug_mode,
-                max_input = max_input,) ])
+                max_input = max_input,
+                wait_mode = wait_mode,
+                wait_threshold = wait_threshold,
+                vector_len = args.vector_len,) ])
 
 
 
@@ -215,6 +235,7 @@ for i in range (a, b):
                 # multiplier = accy_multiplier, X_train = X_train, y_train = y_train, X_test = X_test, y_test = y_test,
                 # split_size = split_size, secret_scale = secret_scale,
                 debug_mode = debug_mode,
+                vector_len = args.vector_len,
                 random_state = np.random.RandomState(seed=np.random.randint(low=0,high=2**32,  dtype='uint64'))))
 
 agent_types.extend([ "ClientAgent" for i in range(a,b) ])
@@ -284,4 +305,8 @@ print (f"    Report step:         {results['clt_collection'] / num_clients}")
 print (f"    Crosscheck step:     {results['clt_crosscheck'] / num_clients}")
 print (f"    Reconstruction step: {results['clt_reconstruction'] / num_clients}")
 print ()
+
+# Print timeline view
+from util.benchmark import bench
+bench.print_timeline()
 

@@ -158,13 +158,19 @@ def sigmoid(x, beta):
         return z / (1 + z)
 
 
+# Global key cache: avoids repeated disk I/O for PKI files.
+_key_cache = {}
+
 def read_key(file_name):
+    if file_name in _key_cache:
+        return _key_cache[file_name]
     try:
         f = open(file_name, "rt")
         key = ECC.import_key(f.read())
         f.close()
     except IOError:
         raise RuntimeError(f"File {file_name} not found. Run setup_pki.py first.")
+    _key_cache[file_name] = key
     return key
 
 def read_pk(file_name):
@@ -176,74 +182,110 @@ def read_sk(file_name):
     return key.d
 
 
+import struct
+
+# Binary serialization for EC points and related data.
+# Each P-256 coordinate is 32 bytes. An uncompressed point = 64 bytes.
+_COORD_LEN = 32
+
+def _point_to_bytes(pt):
+    """Serialize an ECC point to 64 bytes (x || y)."""
+    return int(pt.x).to_bytes(_COORD_LEN, 'big') + int(pt.y).to_bytes(_COORD_LEN, 'big')
+
+def _bytes_to_point(data, offset=0):
+    """Deserialize an ECC point from 64 bytes at the given offset."""
+    x = int.from_bytes(data[offset:offset+_COORD_LEN], 'big')
+    y = int.from_bytes(data[offset+_COORD_LEN:offset+2*_COORD_LEN], 'big')
+    return ECC.EccPoint(x, y)
+
+
 def serialize_dim2_ecp(ecp_dict):
-    msg = {}
-    for i in ecp_dict:
-        msg[i] = {}
-        for j in range(len(ecp_dict[i])):
-            msg[i][j] = (int((ecp_dict[i][j]).x), int(ecp_dict[i][j].y))
-        
-    json_string = json.dumps(msg)
-    # byte_count = len(json_string.encode('utf-8'))
-    return json_string
-        
-def deserialize_dim2_ecp(json_string):
+    """Serialize {key: [EccPoint, ...]} to bytes."""
+    parts = []
+    parts.append(struct.pack('>I', len(ecp_dict)))
+    for key in ecp_dict:
+        key_bytes = json.dumps(key).encode('utf-8')
+        parts.append(struct.pack('>I', len(key_bytes)))
+        parts.append(key_bytes)
+        pts = ecp_dict[key]
+        parts.append(struct.pack('>I', len(pts)))
+        for pt in pts:
+            parts.append(_point_to_bytes(pt))
+    return b''.join(parts)
+
+def deserialize_dim2_ecp(data):
     ecp_dict = {}
-    msg = json.loads(json_string)
-        
-    for i in msg:
-        tmp_list = []
-        for j in msg[i]:
-            x = msg[i][j][0]
-            y = msg[i][j][1]
-            tmp_list.append(ECC.EccPoint(x, y))
-        ecp_dict[i] = tmp_list
+    offset = 0
+    n_keys = struct.unpack_from('>I', data, offset)[0]; offset += 4
+    for _ in range(n_keys):
+        key_len = struct.unpack_from('>I', data, offset)[0]; offset += 4
+        key = json.loads(data[offset:offset+key_len].decode('utf-8')); offset += key_len
+        n_pts = struct.unpack_from('>I', data, offset)[0]; offset += 4
+        pts = []
+        for _ in range(n_pts):
+            pts.append(_bytes_to_point(data, offset)); offset += 2*_COORD_LEN
+        ecp_dict[key] = pts
     return ecp_dict
-    
+
+
 def serialize_dim1_ecp(ecp_list):
-    msg = {}
-    for i in range (len(ecp_list)):
-        msg[i] = (int(ecp_list[i].x), int(ecp_list[i].y))
+    """Serialize [EccPoint, ...] to bytes."""
+    parts = [struct.pack('>I', len(ecp_list))]
+    for pt in ecp_list:
+        parts.append(_point_to_bytes(pt))
+    return b''.join(parts)
 
-    json_string = json.dumps(msg)
-    # byte_count = len(json_string.encode('utf-8'))
-    return json_string
-    
-def deserialize_dim1_ecp(json_string):
-    ecp_list = []
-    msg = json.loads(json_string)
-    for i in msg:
-        x = msg[i][0]
-        y = msg[i][1]
-        ecp_list.append(ECC.EccPoint(x, y))
-    return ecp_list
-    
+def deserialize_dim1_ecp(data):
+    offset = 0
+    n = struct.unpack_from('>I', data, offset)[0]; offset += 4
+    pts = []
+    for _ in range(n):
+        pts.append(_bytes_to_point(data, offset)); offset += 2*_COORD_LEN
+    return pts
+
+
 def serialize_dim1_elgamal(elgamal_dict):
-    msg = {}
-    for i in elgamal_dict:
-        json_tuple = json.dumps(i)
-        msg[json_tuple] = (int(elgamal_dict[i][0].x), int(elgamal_dict[i][0].y), 
-                           int(elgamal_dict[i][1].x), int(elgamal_dict[i][1].y))
-    json_string = json.dumps(msg)
-    return json_string
+    """Serialize {(int,int): (EccPoint, EccPoint)} to bytes."""
+    parts = [struct.pack('>I', len(elgamal_dict))]
+    for key_tuple, (c0, c1) in elgamal_dict.items():
+        # key is a tuple of 2 ints (sender_id, neighbor_id)
+        parts.append(struct.pack('>ii', key_tuple[0], key_tuple[1]))
+        parts.append(_point_to_bytes(c0))
+        parts.append(_point_to_bytes(c1))
+    return b''.join(parts)
 
-def deserialize_dim1_elgamal(json_string):
+def deserialize_dim1_elgamal(data):
     elgamal_dict = {}
-    msg = json.loads(json_string)
-    for i in msg:
-        elgamal_tuple = tuple(json.loads(i))
-        elgamal_dict[elgamal_tuple] = (ECC.EccPoint(msg[i][0], msg[i][1]), 
-                                       ECC.EccPoint(msg[i][2], msg[i][3]))
+    offset = 0
+    n = struct.unpack_from('>I', data, offset)[0]; offset += 4
+    for _ in range(n):
+        k0, k1 = struct.unpack_from('>ii', data, offset); offset += 8
+        c0 = _bytes_to_point(data, offset); offset += 2*_COORD_LEN
+        c1 = _bytes_to_point(data, offset); offset += 2*_COORD_LEN
+        elgamal_dict[(k0, k1)] = (c0, c1)
     return elgamal_dict
 
-def serialize_tuples_bytes(list_of_tuples):
-    serialized_list_of_tuples = [(item[0].hex(), item[1].hex()) for item in list_of_tuples]
-    json_string = json.dumps(serialized_list_of_tuples)
-    return json_string
 
-def deserialize_tuples_bytes(json_string):
-    deserialized_list_of_tuples = [(bytes.fromhex(item[0]), bytes.fromhex(item[1])) for item in json.loads(json_string)]
-    return deserialized_list_of_tuples
+def serialize_tuples_bytes(list_of_tuples):
+    """Serialize [(bytes, bytes), ...] to bytes."""
+    parts = [struct.pack('>I', len(list_of_tuples))]
+    for ciphertext, nonce in list_of_tuples:
+        parts.append(struct.pack('>HH', len(ciphertext), len(nonce)))
+        parts.append(ciphertext)
+        parts.append(nonce)
+    return b''.join(parts)
+
+def deserialize_tuples_bytes(data):
+    offset = 0
+    n = struct.unpack_from('>I', data, offset)[0]; offset += 4
+    result = []
+    for _ in range(n):
+        ct_len, nc_len = struct.unpack_from('>HH', data, offset); offset += 4
+        ct = data[offset:offset+ct_len]; offset += ct_len
+        nc = data[offset:offset+nc_len]; offset += nc_len
+        result.append((ct, nc))
+    return result
+
 
 def serialize_dim1_list(ls):
     return json.dumps(ls)

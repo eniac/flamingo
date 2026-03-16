@@ -42,10 +42,18 @@ parser.add_argument('-s', '--seed', type=int, default=None,
                     help='numpy.random.seed() for simulation')
 parser.add_argument('-v', '--verbose', action='store_true',
                     help='Maximum verbosity!')
-parser.add_argument('-p', '--parallel_mode', type=bool, default=True, 
-                    help='turn on parallel mode at server side')
-parser.add_argument('-d', '--debug_mode', type=bool, default=False, 
-                    help='print debug info')
+parser.add_argument('-p', '--parallel_mode', type=int, default=1,
+                    help='turn on parallel mode at server side (1=on, 0=off)')
+parser.add_argument('-d', '--debug_mode', type=int, default=0,
+                    help='print debug info (1=on, 0=off)')
+parser.add_argument('-w', '--wait_mode', type=str, default='fixed',
+                    choices=['fixed', 'adaptive'],
+                    help='Server waiting mode: "fixed" uses preconfigured timeouts, '
+                         '"adaptive" waits until enough messages arrive')
+parser.add_argument('--wait_threshold', type=float, default=0.9,
+                    help='Fraction of expected messages to trigger processing in adaptive mode (default: 0.9)')
+parser.add_argument('-e', '--vector_len', type=int, default=None,
+                    help='Override input vector length (default: use param.vector_len)')
 parser.add_argument('--config_help', action='store_true',
                     help='Print argument options for this config file')
 
@@ -87,6 +95,12 @@ round_time = args.round_time
 num_iterations = args.num_iterations
 parallel_mode = args.parallel_mode
 debug_mode = args.debug_mode
+wait_mode = args.wait_mode
+wait_threshold = args.wait_threshold
+
+# Override vector length if specified
+if args.vector_len is not None:
+    param.vector_len = args.vector_len
 
 if not param.assert_power_of_two(num_clients):
   raise ValueError("Number of clients must be power of 2")
@@ -212,6 +226,8 @@ agents.extend([ ServiceAgent(
                 neighborhood_size = neighborhood_size,
                 parallel_mode = parallel_mode,
                 debug_mode = debug_mode,
+                wait_mode = wait_mode,
+                wait_threshold = wait_threshold,
                 ) ])
 
 agent_types.extend(["ServiceAgent"])
@@ -251,7 +267,7 @@ results = kernel.runner(agents = agents,
 
 # Print parameter summary and elapsed times by category for this experimental trial.
 print ()
-print (f"######## Microbenchmarks ########")
+print (f"######## Microbenchmarks (legacy) ########")
 print (f"Protocol Iterations: {num_iterations}, Clients: {num_clients}, ")
 
 print ()
@@ -265,4 +281,8 @@ print (f"    Report step:         {results['clt_report'] / num_clients}")
 print (f"    Crosscheck step:     {results['clt_crosscheck'] / param.committee_size}")
 print (f"    Reconstruction step: {results['clt_reconstruction'] / param.committee_size}")
 print ()
+
+# Print detailed benchmark summary
+from util.benchmark import bench
+bench.print_summary(num_clients=num_clients, committee_size=param.committee_size)
 

@@ -168,7 +168,8 @@ class SA_ClientAgent(Agent):
 
             self.sk_share = 0
             for id in agreed_qual:
-                self.sk_share = (self.sk_share + self.recv_shares[id][1]) % self.prime
+                if id in self.recv_shares:
+                    self.sk_share = (self.sk_share + self.recv_shares[id][1]) % self.prime
             
             print(f"Client {self.id} has sk share: {self.sk_share}")
             # End of protocol

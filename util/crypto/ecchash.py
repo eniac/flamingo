@@ -224,55 +224,55 @@ def test_dst(suite_name, L = 0):
     return dst
 
 
+# Precomputed constants for P-256 map_to_curve
+_p256_p = 2**256 - 2**224 + 2**192 + 2**96 - 1
+_p256_a = _p256_p - 3
+_p256_b = int("0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B", 0)
+_p256_inv_a = pow(_p256_a, -1, _p256_p)
+_p256_inv_30 = pow(30, -1, _p256_p)
+_p256_sqrt_exp = (_p256_p + 1) // 4  # p ≡ 3 mod 4, so sqrt(x) = x^((p+1)/4) mod p
+
 def sgn0(x):
-    if x <= 0: 
-        return 1
-    else: 
-        return 0
+    """Return the least significant bit of x (parity)."""
+    return x % 2
+
+def _has_sqrt_mod(x, p):
+    """Euler's criterion: x is a QR mod p iff x^((p-1)/2) ≡ 1 mod p."""
+    return pow(x, (p - 1) // 2, p) == 1
 
 def map_to_curve(u):
-    # map a field element u in Z_p to a EC point
-    p = 2**256 - 2**224 + 2**192 + 2**96 - 1
-    Z = p - 10
+    """Map a field element u in Z_p to a P-256 EC point (simplified SWU)."""
+    p = _p256_p
+    a = _p256_a
+    b = _p256_b
 
-    a = p - 3
-    b = int("0x5AC635D8AA3A93E7B3EBBD55769886BC651D06B0CC53B0F63BCE3C3E27D2604B", 0)
+    denom = (100 * pow(u, 4, p) + (-10) * pow(u, 2, p)) % p
+    if denom == 0:
+        tv1 = 0
+    else:
+        tv1 = pow(denom, -1, p)
 
-   
-    tv1 = libnum.invmod((100 * pow(u,4,p) + (-10) * pow(u,2,p))%p, p)
-    
+    x1 = ((-b * _p256_inv_a) * (1 + tv1)) % p
 
-    x1 = ((-b * pow(a, -1, p)) * (1 + tv1)) % p
-   
     if tv1 == 0:
-        x1 = (b * pow(30, -1, p)) % p
+        x1 = (b * _p256_inv_30) % p
 
-    gx1 = x1**3 % p
-    gx1 = (gx1 + a * x1) % p
-    gx1 = (gx1 + b) % p
+    gx1 = (pow(x1, 3, p) + a * x1 + b) % p
 
-    x2 = ((-10) * pow(u,2,p) * x1) % p
-  
-    gx2 = x2**3 % p
-    gx2 = (gx2 + a * x2) % p
-    gx2 = (gx2 + b) % p
+    x2 = ((-10) * pow(u, 2, p) * x1) % p
+    gx2 = (pow(x2, 3, p) + a * x2 + b) % p
 
-    x = None
-    y = None
-
-    if libnum.has_sqrtmod(gx1, {p:1}):
+    if _has_sqrt_mod(gx1, p):
         x = x1
-        y = next(libnum.sqrtmod(gx1, {p:1}))
-    else: 
+        y = pow(gx1, _p256_sqrt_exp, p)
+    else:
         x = x2
-        y = next(libnum.sqrtmod(gx2, {p:1}))
-    
+        y = pow(gx2, _p256_sqrt_exp, p)
 
     if sgn0(u) != sgn0(y):
-        y = -y
+        y = p - y  # negate mod p instead of using Python negative
 
-    hash_point = ECC.EccPoint(x, y)
-    return hash_point
+    return ECC.EccPoint(x, y)
 
 def hash_str_to_curve(msg, count, modulus, degree, blen, expander):
     u = hash_to_field(msg, count, modulus, degree, blen, expander)

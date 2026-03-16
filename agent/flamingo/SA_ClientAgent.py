@@ -5,6 +5,7 @@ from message.Message import Message
 import dill
 import time
 import logging
+import sys
 
 import math
 import libnum
@@ -12,19 +13,18 @@ import numpy as np
 import pandas as pd
 import random
 
-# pycryptodomex library functions
 from Cryptodome.PublicKey import ECC
 from Cryptodome.Cipher import AES, ChaCha20
 from Cryptodome.Random import get_random_bytes
 from Cryptodome.Hash import SHA256
 from Cryptodome.Signature import DSS
 
-# other user-level crypto functions
 import hashlib
 from util import param
 from util import util
 from util.crypto import ecchash
 from util.crypto.secretsharing import secret_int_to_points, points_to_secret_int
+from util.benchmark import bench
 
 # The PPFL_TemplateClientAgent class inherits from the base Agent class.
 class SA_ClientAgent(Agent):
@@ -48,10 +48,12 @@ class SA_ClientAgent(Agent):
         super().__init__(id, name, type, random_state)
 
         # Set logger
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
-        if debug_mode:
-            logging.basicConfig()
+        self.logger = logging.getLogger(f"flamingo.client.{id}")
+        self.logger.setLevel(logging.DEBUG if debug_mode else logging.WARNING)
+        if debug_mode and not self.logger.handlers:
+            handler = logging.StreamHandler(sys.stderr)
+            handler.setFormatter(logging.Formatter(f"[Client {id}] %(message)s"))
+            self.logger.addHandler(handler)
 
 
         """Read keys."""
@@ -72,6 +74,11 @@ class SA_ClientAgent(Agent):
         self.key_length = key_length
         self.neighbors_list = set() # neighbors
         self.cipher_stored = None   # Store cipher from server across steps
+
+        # Cache for pairwise DH secrets (keyed by neighbor ID).
+        # The DH secret sk_i * pk_j is fixed across iterations;
+        # only the round-dependent h_{i,j,t} changes.
+        self.pairwise_dh_cache = {}  # neighbor_id -> (group_element, hashed_bytes)
 
 
         """Select committee."""
@@ -156,25 +163,31 @@ class SA_ClientAgent(Agent):
 
         elif msg.body['msg'] == "SIGN":
             if msg.body['iteration'] == self.current_iteration:
+                t_start = time.perf_counter()
                 dt_protocol_start = pd.Timestamp('now')
                 self.cipher_stored = msg
                 self.signSendLabels(currentTime, msg.body['labels'])
                 self.recordTime(dt_protocol_start, 'CROSSCHECK')
+                bench.set_iteration(self.current_iteration)
+                bench.record_client_time("crosscheck", time.perf_counter() - t_start)
 
         elif msg.body['msg'] == "DEC":
             if msg.body['iteration'] == self.current_iteration:
+                t_start = time.perf_counter()
                 dt_protocol_start = pd.Timestamp('now')
 
-                if self.cipher_stored == None:
-                    if __debug__: self.logger.info("did not recv sign")
+                if self.cipher_stored is None:
+                    self.logger.debug("did not recv sign")
                 else:
                     if self.cipher_stored.body['iteration'] == self.current_iteration:
-                        self.decryptSendShares(util.deserialize_dim1_elgamal(self.cipher_stored.body['dec_target_pairwise']), 
-                                               util.deserialize_tuples_bytes(self.cipher_stored.body['dec_target_mi']), 
+                        self.decryptSendShares(util.deserialize_dim1_elgamal(self.cipher_stored.body['dec_target_pairwise']),
+                                               util.deserialize_tuples_bytes(self.cipher_stored.body['dec_target_mi']),
                                                self.cipher_stored.body['client_id_list'])
-                    
+
                 self.cipher_stored = None
                 self.recordTime(dt_protocol_start, 'RECONSTRUCTION')
+                bench.set_iteration(self.current_iteration)
+                bench.record_client_time("reconstruction", time.perf_counter() - t_start)
 
         # End of the protocol / start the next iteration
         # Receiving the output from the server
@@ -197,13 +210,12 @@ class SA_ClientAgent(Agent):
     ###################################
     def sendVectors(self, currentTime):
 
+        t_start = time.perf_counter()
         dt_protocol_start = pd.Timestamp('now')
 
         # Find this client's neighbors: parse graph from PRG(PRF(iter, root_seed))
         self.neighbors_list = param.findNeighbors(param.root_seed, self.current_iteration, self.num_clients, self.id, self.neighborhood_size)
-        if __debug__:
-            self.logger.info("client indices in neighbors list starts from 0")
-            self.logger.info(f"client {self.id} neighbors list: {self.neighbors_list}")
+        self.logger.debug(f"neighbors: {self.neighbors_list}")
      
         # Download public keys of neighbors from PKI file
         # Client index starting frrom 0
@@ -249,18 +261,20 @@ class SA_ClientAgent(Agent):
         data = param.fixed_key * self.vector_len
         prg_mi = prg_mi_holder.encrypt(data)
 
-        # compute pairwise masks r_ij
-        neighbor_pairwise_secret_group = {}  # g^{a_i a_j} = r_ij in group
-        neighbor_pairwise_secret_bytes = {}  
-        
+        # compute pairwise masks r_ij, using cache for DH secrets
+        neighbor_pairwise_secret_bytes = {}
+
         for id in self.neighbors_list:
-            neighbor_pairwise_secret_group[id] = self.secret_key * neighbor_pubkeys[id]
-            # hash the g^{ai aj} to 256 bits (16 bytes)
-            px = (int(neighbor_pairwise_secret_group[id].x)).to_bytes(self.key_length, 'big')
-            py = (int(neighbor_pairwise_secret_group[id].y)).to_bytes(self.key_length, 'big')
-            
-            hash_object = SHA256.new(data=(px+py))
-            neighbor_pairwise_secret_bytes[id] = hash_object.digest()[0:self.key_length] 
+            if id in self.pairwise_dh_cache:
+                neighbor_pairwise_secret_bytes[id] = self.pairwise_dh_cache[id]
+            else:
+                dh_point = self.secret_key * neighbor_pubkeys[id]
+                px = (int(dh_point.x)).to_bytes(self.key_length, 'big')
+                py = (int(dh_point.y)).to_bytes(self.key_length, 'big')
+                hash_object = SHA256.new(data=(px+py))
+                hashed = hash_object.digest()[0:self.key_length]
+                self.pairwise_dh_cache[id] = hashed
+                neighbor_pairwise_secret_bytes[id] = hashed
           
 
         neighbor_pairwise_mask_seed_group = {}
@@ -331,21 +345,24 @@ class SA_ClientAgent(Agent):
             # the set sent to the server is indexed from 0
             cipher_msg[(self.id, id)] = self.elgamal_enc_group(self.system_pk, neighbor_pairwise_mask_seed_group[id])
 
-        if __debug__: 
-            client_comp_delay = pd.Timestamp('now') - dt_protocol_start
-            self.logger.info(f"client {self.id} computation delay for vector: {client_comp_delay}")
-            self.logger.info(f"client {self.id} sends vector at {currentTime + client_comp_delay}")
-        
+        self.logger.debug(f"computation delay for vector: {pd.Timestamp('now') - dt_protocol_start}")
+
         # Send the vector to the server
+        enc_mi_data = util.serialize_tuples_bytes(enc_mi_shares)
+        enc_pw_data = util.serialize_dim1_elgamal(cipher_msg)
         self.sendMessage(self.serviceAgentID,
                          Message({"msg": "VECTOR",
                                   "iteration": self.current_iteration,
                                   "sender": self.id,
                                   "vector": vec,
-                                  "enc_mi_shares": util.serialize_tuples_bytes(enc_mi_shares),
-                                  "enc_pairwise": util.serialize_dim1_elgamal(cipher_msg),
+                                  "enc_mi_shares": enc_mi_data,
+                                  "enc_pairwise": enc_pw_data,
                                   }),
                          tag="comm_key_generation")
+
+        # Record client report time for benchmarks
+        bench.set_iteration(self.current_iteration)
+        bench.record_client_time("report", time.perf_counter() - t_start)
 
   
     def signSendLabels(self, currentTime, msg_to_sign):
@@ -362,7 +379,6 @@ class SA_ClientAgent(Agent):
                                   "sender": self.id,
                                   "signed_labels": client_signed_labels,
                                   "committee_member_idx": self.committee_member_idx,
-                                  "signed_labels": client_signed_labels,
                                   }),
                         tag="comm_sign_client")
   
@@ -454,12 +470,5 @@ class SA_ClientAgent(Agent):
         dt_protocol_end = pd.Timestamp('now')
         self.elapsed_time[categoryName] += dt_protocol_end - startTime
     
-    def agent_print(*args, **kwargs):
-        """
-        Custom print function that adds a [Server] header before printing.
-
-        Args:
-            *args: Any positional arguments that the built-in print function accepts.
-            **kwargs: Any keyword arguments that the built-in print function accepts.
-        """
-        print(*args, **kwargs)
+    def agent_print(self, *args, **kwargs):
+        print(f"[Client {self.id}]", *args, **kwargs)
