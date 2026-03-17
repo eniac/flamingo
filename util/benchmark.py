@@ -227,6 +227,61 @@ class BenchmarkCollector:
 
         print("=" * 80)
 
+    def save_timeline_csv(self, filepath="timeline.csv"):
+        """Save the timeline to a CSV file for later analysis.
+
+        Columns: iteration, simtime, offset_s, event
+        """
+        import csv
+        iterations = sorted(set(list(self.timeline.keys()) + list(self.arrivals.keys())))
+        if not iterations:
+            return
+
+        rows = []
+        for it in iterations:
+            events = self.timeline.get(it, {})
+            arrival_data = self.arrivals.get(it, {})
+            iter_start = events.get("iter_start")
+            if iter_start is None:
+                continue
+
+            # Server processing events
+            for name, t in events.items():
+                if name == "iter_start":
+                    continue
+                delta_s = (t - iter_start).total_seconds()
+                rows.append((it, str(t), delta_s, name))
+
+            # Arrival milestones
+            for round_name, times in arrival_data.items():
+                times = sorted(times)
+                n_arrived = len(times)
+                if n_arrived == 0:
+                    continue
+                n_expected = self._expected_counts.get((it, round_name), n_arrived)
+                for target_frac, label in [(0.50, "50%"), (0.90, "90%")]:
+                    target_count = int(n_expected * target_frac)
+                    if target_count <= n_arrived and target_count > 0:
+                        t = times[target_count - 1]
+                        delta_s = (t - iter_start).total_seconds()
+                        rows.append((it, str(t), delta_s,
+                                     f"server receives {label} of {round_name} ({target_count}/{n_expected})"))
+                # Last arrived
+                t = times[-1]
+                delta_s = (t - iter_start).total_seconds()
+                rows.append((it, str(t), delta_s,
+                             f"server receives last {round_name} ({n_arrived}/{n_expected})"))
+
+        # Sort by iteration then offset
+        rows.sort(key=lambda r: (r[0], r[2]))
+
+        with open(filepath, 'w', newline='') as f:
+            writer = csv.writer(f)
+            writer.writerow(["iteration", "simtime", "offset_s", "event"])
+            writer.writerows(rows)
+
+        print(f"\nTimeline saved to {filepath}")
+
     def to_dict(self):
         """Export all data as a plain dict for JSON serialization."""
         return {

@@ -62,11 +62,29 @@ def run_single(num_clients, vector_len, num_iterations, wait_mode, wait_threshol
         "wall_clock_s": round(wall_clock, 2),
     }
 
-    # Parse final sums to verify correctness (both "[Server] final sum:" and "final sum =")
-    sums = re.findall(r"final sum\s*[=:]\s*\[(\d+)", stdout)
+    # Validate each iteration's result.
+    # With unit vector inputs, a correct sum has all elements equal (e.g., [115 115 115 ...]).
+    # A wrong sum has random garbage values (e.g., [1851310709 2717774252 ...]).
+    # "AGGREGATION FAILED" is a protocol limitation (insufficient shares), not a code bug.
+    sum_lines = re.findall(r"final sum\s*[=:]\s*\[([^\]]+)", stdout)
     fails = stdout.count("AGGREGATION FAILED")
-    data["sums_correct"] = (len(sums) > 0 and all(int(s) > 0 for s in sums) and fails == 0)
     data["agg_failures"] = fails
+    data["sums_correct"] = True
+    data["bug_detected"] = False
+
+    for i, line in enumerate(sum_lines):
+        # Parse numeric values only (skip '...' ellipsis)
+        values = [v for v in line.strip().split()[:6] if v.isdigit()]
+        if len(values) >= 2:
+            # All elements should be the same for unit vector test
+            if len(set(values)) > 1:
+                data["sums_correct"] = False
+                data["bug_detected"] = True
+                data["bug_detail"] = f"iteration {i+1}: inconsistent sum values {values[:3]}..."
+                print(f"\n  ERROR: code bug detected in iteration {i+1}!")
+                print(f"  Sum values differ: {values[:5]}")
+                print(f"  This indicates incorrect mask cancellation, not protocol dropout.")
+                return data  # stop immediately
 
     # Parse server timings from benchmark summary
     def parse_time(pattern):
@@ -107,9 +125,18 @@ def run_single(num_clients, vector_len, num_iterations, wait_mode, wait_threshol
             m = re.search(rf"^\s+{step}\s+avg=([\d.]+)s", stdout, re.MULTILINE)
         data[f"clt_{step}_avg_s"] = float(m.group(1)) if m else 0.0
 
-    # Parse ECC scalar mult time from last iteration's detail
-    m = re.search(r"ecc_scalar_mult\s+([\d.]+)s", stdout)
-    data["srv_ecc_mult_s"] = float(m.group(1)) if m else 0.0
+    # Parse reconstruction sub-timers from benchmark summary
+    # These appear as "      sub_op_name      X.XXXXs  (N calls)" under reconstruction
+    for sub_op in ["lagrange_interp", "recover_mi", "ecc_scalar_mult", "recover_pairwise"]:
+        # Find all instances and average them (one per iteration)
+        matches = re.findall(rf"{sub_op}\s+([\d.]+)s", stdout)
+        if matches:
+            data[f"srv_recon_{sub_op}_s"] = round(sum(float(m) for m in matches) / len(matches), 6)
+        else:
+            data[f"srv_recon_{sub_op}_s"] = 0.0
+
+    # Backward compat alias
+    data["srv_ecc_mult_s"] = data["srv_recon_ecc_scalar_mult_s"]
 
     # Parse communication
     m = re.search(r"client->server \(VECTOR\)\s+total=\s*([\d,]+)", stdout)
@@ -137,24 +164,30 @@ def print_table(results, title="Benchmark Results"):
 
     header = (f"{'Protocol':>16} {'Clients':>7} {'VecLen':>7} {'Iters':>5} {'Mode':>8} {'Thresh':>6} "
               f"{'Wall(s)':>8} "
-              f"{'SrvReport':>10} {'SrvRecon':>10} {'ECCMult':>10} "
+              f"{'SrvReport':>10} {'SrvRecon':>10} "
+              f"{'Lagrange':>9} {'RecovMI':>9} {'ECCMult':>9} {'RecovPW':>9} "
               f"{'CltReport':>10} {'CltRecon':>10} "
               f"{'CommVec(KB)':>12} {'CommSign(KB)':>13} "
               f"{'Online':>6} {'OK':>3}")
     print(header)
-    print("-" * 145)
+    print("-" * 175)
 
     for r in results:
+        if r.get('bug_detected'):
+            print(f"  ** BUG: {r.get('bug_detail', 'unknown')} **")
+            continue
         th_str = f"{r.get('wait_threshold', 0.9):.2f}" if r['wait_mode'] == 'adaptive' else "  -"
         line = (f"{r.get('protocol','flamingo'):>16} {r['num_clients']:>7} {r['vector_len']:>7} {r['num_iterations']:>5} {r['wait_mode']:>8} {th_str:>6} "
                 f"{r['wall_clock_s']:>8.1f} "
-                f"{r['srv_report_s']:>10.4f} {r['srv_reconstruction_s']:>10.4f} {r['srv_ecc_mult_s']:>10.4f} "
-                f"{r['clt_report_avg_s']:>10.4f} {r['clt_reconstruction_avg_s']:>10.4f} "
-                f"{r['comm_vector_bytes']/1024:>12.0f} {r['comm_sign_bytes']/1024:>13.0f} "
-                f"{r['avg_online']:>6} {'Y' if r['sums_correct'] else 'N':>3}")
+                f"{r.get('srv_report_s',0):>10.4f} {r.get('srv_reconstruction_s',0):>10.4f} "
+                f"{r.get('srv_recon_lagrange_interp_s',0):>9.4f} {r.get('srv_recon_recover_mi_s',0):>9.4f} "
+                f"{r.get('srv_recon_ecc_scalar_mult_s',0):>9.4f} {r.get('srv_recon_recover_pairwise_s',0):>9.4f} "
+                f"{r.get('clt_report_avg_s',0):>10.4f} {r.get('clt_reconstruction_avg_s',0):>10.4f} "
+                f"{r.get('comm_vector_bytes',0)/1024:>12.0f} {r.get('comm_sign_bytes',0)/1024:>13.0f} "
+                f"{r.get('avg_online',0):>6} {'Y' if r['sums_correct'] else 'N':>3}")
         print(line)
 
-    print(f"{'=' * 145}")
+    print(f"{'=' * 175}")
 
 
 def main():
@@ -222,9 +255,14 @@ def main():
         data = run_single(n, vl, iters, mode, wait_threshold=th, seed=args.seed, protocol=proto)
         if data:
             results.append(data)
-            print(f"done ({data['wall_clock_s']:.1f}s, sum_ok={data['sums_correct']})")
+            if data.get("bug_detected"):
+                print(f"BUG DETECTED — stopping benchmark")
+                print(f"  Detail: {data.get('bug_detail', 'unknown')}")
+                break
+            agg_fail_str = f", agg_failures={data['agg_failures']}" if data['agg_failures'] > 0 else ""
+            print(f"done ({data['wall_clock_s']:.1f}s, correct={data['sums_correct']}{agg_fail_str})")
         else:
-            print("FAILED")
+            print("FAILED (process error)")
 
     # Print summary table
     print_table(results)

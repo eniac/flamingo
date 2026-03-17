@@ -4,8 +4,10 @@ from message.Message import Message
 import dill
 import json
 import logging
+import os
 import sys
 import time as walltime
+from concurrent.futures import ThreadPoolExecutor
 
 import math
 import numpy as np
@@ -564,13 +566,24 @@ class SA_ServiceAgent(Agent):
         sum_df = pd.DataFrame(np.sum(df_mi_shares.values, axis=1) % self.prime)
         sum_df[0] = sum_df[0].apply(lambda var: var.to_bytes(self.key_length, 'big'))
 
-        prg_mi = {}
+        def _expand_prg(key):
+            """Expand a single PRG key into a full-length vector (thread-safe)."""
+            prg = ChaCha20.new(key=key, nonce=param.nonce)
+            raw = prg.encrypt(param.fixed_key * self.vector_len)
+            return np.frombuffer(raw, dtype=self.vector_dtype).copy()
+
+        keys_mi = [sum_df[0][i] for i in range(len(sum_df))]
+        parallel_recon = os.environ.get("FLAMINGO_PARALLEL_RECON", "1") == "1"
+        n_workers = min(len(keys_mi), os.cpu_count() or 1)
+        if parallel_recon and n_workers > 1 and self.vector_len >= 100000:
+            with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                mi_vecs = list(pool.map(_expand_prg, keys_mi))
+        else:
+            mi_vecs = [_expand_prg(k) for k in keys_mi]
+
         mi_vec = np.zeros(self.vector_len, dtype=self.vector_dtype)
-        for i in range(len(sum_df)):
-            prg_mi_holder = ChaCha20.new(key=sum_df[0][i], nonce=param.nonce)
-            data = param.fixed_key * self.vector_len
-            prg_mi[i] = prg_mi_holder.encrypt(data)
-            mi_vec = mi_vec - np.frombuffer(prg_mi[i], dtype=self.vector_dtype)
+        for v in mi_vecs:
+            mi_vec -= v
         bench.stop_timer("reconstruction", "recover_mi")
 
         if not self.dec_target_pairwise:
@@ -599,22 +612,35 @@ class SA_ServiceAgent(Agent):
                 SHA256.new(int(var.x).to_bytes(self.key_length, 'big')
                    + int(var.y).to_bytes(self.key_length, 'big')).digest()[0 : self.key_length])
 
-            prg_pairwise = {}
-            cancel_vec = np.zeros(self.vector_len, dtype=self.vector_dtype)
-
             if len(sum_df) != len(self.recon_symbol):
                 raise RuntimeError("The decrypted length is wrong.")
             recon_symbol_list = list(self.recon_symbol.values())
 
-            for i in range(len(sum_df)):
-                prg_pairwise_holder = ChaCha20.new(key=sum_df[0][i], nonce=param.nonce)
-                data = param.fixed_key * self.vector_len
-                prg_pairwise[i] = prg_pairwise_holder.encrypt(data)
+            keys_pw = [sum_df[0][i] for i in range(len(sum_df))]
+            symbols = recon_symbol_list
 
-                if recon_symbol_list[i] == 1:
-                    cancel_vec = cancel_vec + np.frombuffer(prg_pairwise[i], dtype=self.vector_dtype)
-                elif recon_symbol_list[i] == -1:
-                    cancel_vec = cancel_vec - np.frombuffer(prg_pairwise[i], dtype=self.vector_dtype)
+            def _expand_prg_signed(args):
+                """Expand PRG and apply sign (thread-safe)."""
+                key, symbol = args
+                if symbol == 0:
+                    return np.zeros(self.vector_len, dtype=self.vector_dtype)
+                prg = ChaCha20.new(key=key, nonce=param.nonce)
+                raw = prg.encrypt(param.fixed_key * self.vector_len)
+                vec = np.frombuffer(raw, dtype=self.vector_dtype).copy()
+                if symbol == -1:
+                    vec = -vec
+                return vec
+
+            n_workers = min(len(keys_pw), os.cpu_count() or 1)
+            if parallel_recon and n_workers > 1 and self.vector_len >= 100000:
+                with ThreadPoolExecutor(max_workers=n_workers) as pool:
+                    pw_vecs = list(pool.map(_expand_prg_signed, zip(keys_pw, symbols)))
+            else:
+                pw_vecs = [_expand_prg_signed(a) for a in zip(keys_pw, symbols)]
+
+            cancel_vec = np.zeros(self.vector_len, dtype=self.vector_dtype)
+            for v in pw_vecs:
+                cancel_vec += v
 
             self.final_sum = self.vec_sum_partial + cancel_vec + mi_vec
             bench.stop_timer("reconstruction", "recover_pairwise")

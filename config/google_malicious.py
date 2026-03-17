@@ -4,6 +4,7 @@ from agent.google_malicious.SA_ClientAgent import SA_ClientAgent as ClientAgent
 from agent.google_malicious.SA_ServiceAgent import SA_ServiceAgent as ServiceAgent
 from model.LatencyModel import LatencyModel
 from util import util
+from util import param
 
 # Standard modules.
 from datetime import timedelta
@@ -94,6 +95,9 @@ np.random.seed(seed)
 util.silent_mode = not args.verbose
 
 num_clients = args.num_clients
+if num_clients < 128:
+  print(f"Error: num_clients={num_clients} is too small. Minimum number of clients is 128.")
+  exit(1)
 # Default: 2 * ceil(log2(n)) outgoing neighbors for better dropout tolerance.
 # Original paper uses ceil(log2(n)) but that's tight with ~10% dropout.
 import math as _math
@@ -309,4 +313,5 @@ print ()
 # Print timeline view
 from util.benchmark import bench
 bench.print_timeline()
+bench.save_timeline_csv("timeline_google_malicious.csv")
 

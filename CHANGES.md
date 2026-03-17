@@ -111,6 +111,17 @@ Both protocols now use `_expected_wakeup_time` to detect and skip stale wakeups.
 
 ---
 
+## README Updates
+
+- **Installation Instructions**: Replaced Linux-only Miniconda wget/bash workflow with a simple `pip install` option; kept Conda as Option B.
+- **Command-Line Options**: Expanded from 6 options to include `-w`, `--wait_threshold`, `-s`, `-e` which were previously undocumented. Noted minimum 128 clients.
+- **Debug flag**: Fixed example from `-d True` to `-d 1` (it's an `int` argument, not `bool`).
+- **New section: "Server Waiting Modes: Fixed vs. Adaptive"**: Added per-round tables describing the adaptive trigger condition for each round in both Flamingo and Google Malicious protocols.
+- **Missing import in `config/google_malicious.py`**: Added `from util import param` — was referenced (for `param.vector_len`) but never imported, breaking the `-e` flag.
+- **Minimum client validation**: Added guard in both `config/flamingo.py` and `config/google_malicious.py` to reject `num_clients < 128` with a clear error message.
+
+---
+
 ## Adaptive Server Waiting Mode
 
 ### Overview

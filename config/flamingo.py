@@ -90,6 +90,9 @@ np.random.seed(seed)
 # Config parameter that causes util.util.print to suppress most output.
 util.silent_mode = not args.verbose
 num_clients = args.num_clients
+if num_clients < 128:
+  print(f"Error: num_clients={num_clients} is too small. Minimum number of clients is 128.")
+  exit(1)
 neighborhood_size = args.neighborhood_size
 round_time = args.round_time
 num_iterations = args.num_iterations
@@ -285,4 +288,5 @@ print ()
 # Print detailed benchmark summary
 from util.benchmark import bench
 bench.print_summary(num_clients=num_clients, committee_size=param.committee_size)
+bench.save_timeline_csv("timeline_flamingo.csv")
 
