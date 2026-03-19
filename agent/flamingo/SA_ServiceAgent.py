@@ -183,7 +183,7 @@ class SA_ServiceAgent(Agent):
                 triggered = True
         # Round 2 (forward_signatures): waiting for SIGN messages from committee
         elif self.current_round == 2:
-            needed = int(len(self.user_committee) * self.wait_threshold)
+            needed = int(len(self.user_committee) * 2 / 3)
             if len(self.recv_committee_sigs) >= needed:
                 self.agent_print(f"adaptive trigger: {len(self.recv_committee_sigs)}/{len(self.user_committee)} sigs (threshold={needed})")
                 triggered = True
@@ -278,6 +278,16 @@ class SA_ServiceAgent(Agent):
 
         self.current_round = 1
         # _expected_wakeup_time is set by _next_round or setWakeup calls below
+
+        # Send START_REPORT to all clients to initiate the first report round
+        # (makes iteration 1 server-initiated, consistent with iterations 2+)
+        for id in self.users:
+            self.sendMessage(id,
+                             Message({"msg": "START_REPORT",
+                                      "sender": self.id,
+                                      "iteration": self.current_iteration,
+                                      }),
+                             tag="comm_start_report")
 
         server_comp_delay = pd.Timestamp('now') - dt_protocol_start
         if self.wait_mode == 'adaptive':

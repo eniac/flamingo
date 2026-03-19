@@ -150,14 +150,20 @@ class SA_ClientAgent(Agent):
     # Simulation participation messages.
     def wakeup(self, currentTime):
         super().wakeup(currentTime)
-        dt_wake_start = pd.Timestamp('now')
-        self.sendVectors(currentTime)
+        # Client no longer initiates report on its own.
+        # It waits for the server's START_REPORT (iter 1) or REQ (iter 2+).
 
     def receiveMessage(self, currentTime, msg):
         super().receiveMessage(currentTime, msg)
 
+        # Server initiates the first report round
+        if msg.body['msg'] == "START_REPORT":
+            dt_protocol_start = pd.Timestamp('now')
+            self.sendVectors(currentTime)
+            self.recordTime(dt_protocol_start, "REPORT")
+
         # with signatures of other clients from the server
-        if msg.body['msg'] == "COMMITTEE_SHARED_SK":
+        elif msg.body['msg'] == "COMMITTEE_SHARED_SK":
             self.committee_shared_sk = msg.body['sk_share']
             self.committee_member_idx = msg.body['committee_member_idx']
 

@@ -160,16 +160,15 @@ class SA_ClientAgent(Agent):
 
     def wakeup(self, currentTime):
         super().wakeup(currentTime)
-        
-        dt_wake_start = pd.Timestamp('now')
-        
+        # Client no longer initiates pubkey on its own.
+        # It waits for the server's START_PUBKEY (iter 1) or REQ_PUBKEY (iter 2+).
         self.serviceAgentID = 0
+
+    def _send_pubkey(self, currentTime):
+        """Generate a new key pair and send PUBKEY to server."""
         self.mykey = ECC.generate(curve='P-256')
-       
         self.secret_key = self.mykey.d
         self.public_key = self.mykey.pointQ
-
-        # self.mi_bytes = get_random_bytes(16)
 
         self.sendMessage(self.serviceAgentID,
                              Message({"msg": "PUBKEY",
@@ -179,11 +178,15 @@ class SA_ClientAgent(Agent):
                                       }),
                              tag="pubkey_to_server")
 
-        
-
     def receiveMessage(self, currentTime, msg):
         super().receiveMessage(currentTime, msg)
-        if msg.body['msg'] == "REQ_CHOICE":
+
+        if msg.body['msg'] == "START_PUBKEY":
+            dt_protocol_start = pd.Timestamp('now')
+            self._send_pubkey(currentTime)
+            self.recordTime(dt_protocol_start, 'ADKEY')
+
+        elif msg.body['msg'] == "REQ_CHOICE":
             
             dt_protocol_start = pd.Timestamp('now')
 
@@ -463,40 +466,19 @@ class SA_ClientAgent(Agent):
             self.recordTime(dt_protocol_start, 'RECONSTRUCTION')
 
         elif msg.body['msg'] == "REQ_PUBKEY" and self.current_iteration != 0:
-            
-            # send pubkeys to the server 
-            dt_protocol_start = pd.Timestamp('now')
-            
-            # generate new sk/pk pair
-           
-            self.mykey = ECC.generate(curve='P-256')
-       
-            self.secret_key = self.mykey.d
-            self.public_key = self.mykey.pointQ
 
-            # process backup request
-            # self.mi_bytes = get_random_bytes(16)
-            
+            dt_protocol_start = pd.Timestamp('now')
+
             self.current_iteration += 1
 
             if self.current_iteration > self.no_of_iterations:
-                # print("client", self.id, "input list:", self.input)
                 return
 
-            self.sendMessage(self.serviceAgentID,
-                            Message({"msg": "PUBKEY",
-                                      "iteration": self.current_iteration,
-                                      "sender": self.id,
-                                      "pubkey": self.public_key,
-                                      }),
-                             tag="pubkey_to_server")
+            self._send_pubkey(currentTime)
 
             if __debug__:
                 self.logger.info(f"Client {self.id} time for processing PUBKEYS (generate new): {pd.Timestamp('now') - dt_protocol_start}")
-
-                # print serialization time
                 tmp_pk_msg = (int(self.public_key.x), int(self.public_key.y))
-                
                 self.logger.info(f"Client sends pubkey, comm: {len(dill.dumps(tmp_pk_msg)) + len(dill.dumps(self.id))}")
 
             self.recordTime(dt_protocol_start, 'ADKEY')

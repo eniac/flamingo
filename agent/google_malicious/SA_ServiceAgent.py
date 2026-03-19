@@ -394,6 +394,17 @@ class SA_ServiceAgent(Agent):
         bench.set_iteration(self.current_iteration)
         bench.record_timeline("iter_start", currentTime)
         dt_protocol_start = pd.Timestamp('now')
+
+        # Send START_PUBKEY to all clients to initiate the first round
+        # (makes iteration 1 server-initiated, consistent with iterations 2+)
+        for id in self.users:
+            self.sendMessage(id,
+                             Message({"msg": "START_PUBKEY",
+                                      "iteration": self.current_iteration,
+                                      "sender": 0,
+                                      }),
+                             tag="comm_start_pubkey")
+
         server_comp_delay = pd.Timestamp('now') - dt_protocol_start
         self._next_round(currentTime, 1, server_comp_delay, pd.Timedelta('3s'))
 
