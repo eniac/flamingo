@@ -91,9 +91,6 @@ This document lists the changes made to the Flamingo codebase to make it run on 
 
 ---
 
-## Computation Delay
-
-Both Flamingo and Google Malicious set `setComputationDelay(0)` during initialization, meaning agent computation time does not add to simulation time. The simulation timeline reflects only network latency and the kernel's `defaultComputationDelay` (0.1s per `sendMessage` call). Actual computation times are recorded via `recordTime()` for benchmarking purposes but do not affect the discrete-event simulation clock.
 
 ## Server-Driven First Round (Flamingo)
 
