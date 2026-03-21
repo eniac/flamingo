@@ -91,15 +91,19 @@ This document lists the changes made to the Flamingo codebase to make it run on 
 
 ---
 
-## Computation Delay (both protocols)
+## Computation Delay
 
-Added `setComputationDelay` to Flamingo's `recordTime` (both server and client), matching google_malicious. After processing a round, the agent is "busy" for the wall-clock duration of that processing. This models realistic end-to-end round trip time:
+Both Flamingo and Google Malicious set `setComputationDelay(0)` during initialization, meaning agent computation time does not add to simulation time. The simulation timeline reflects only network latency and the kernel's `defaultComputationDelay` (0.1s per `sendMessage` call). Actual computation times are recorded via `recordTime()` for benchmarking purposes but do not affect the discrete-event simulation clock.
 
-```
-server sends → network latency → client computes → network latency → server receives → server computes → next round
-```
+## Server-Driven First Round (Flamingo)
 
-Previously Flamingo had zero computation delay (server/client acted instantly), which made the simulation undercount total protocol time.
+Changed Flamingo's first report round from client-initiated to server-initiated, making it consistent with iterations 2+.
+
+**Before:** Clients sent their report vectors upon `wakeup()` (self-initiated). This meant iteration 1's report round was one-way (client → server), while all other rounds were round-trip (server → client → server).
+
+**After:** The server sends a `START_REPORT` message to all clients at the end of `initialize()`. Clients wait for this message before sending their report vectors. All rounds are now uniformly round-trip.
+
+**Why:** This ensures fair comparison with Google Malicious (which is also server-driven) and makes wait time measurements consistent across iterations.
 
 ## Stale Wakeup Detection (both protocols)
 
@@ -251,8 +255,8 @@ When dropout exceeds the 2/3 threshold for a particular client's neighborhood, m
 | `util/crypto/ecchash.py` | hash-to-curve optimization + sgn0 fix |
 | `util/benchmark.py` | **New file** - benchmark collection |
 | `benchmark_suite.py` | **New file** - parameter-sweep benchmark script |
-| `agent/flamingo/SA_ClientAgent.py` | DH cache, logging, benchmarks, duplicate key fix |
-| `agent/flamingo/SA_ServiceAgent.py` | Sequential recon, adaptive waiting, retry, logging, benchmarks |
+| `agent/flamingo/SA_ClientAgent.py` | DH cache, logging, benchmarks, duplicate key fix, START_REPORT handler |
+| `agent/flamingo/SA_ServiceAgent.py` | Sequential recon, adaptive waiting, retry, logging, benchmarks, server-driven first round |
 | `config/flamingo.py` | argparse fixes, new flags (-w, -e, --wait_threshold), benchmark summary call |
 | `config/google_malicious.py` | argparse fixes, new flags (-w, --wait_threshold) |
 | `agent/google_malicious/SA_ServiceAgent.py` | Adaptive waiting, recordTime fix, _next_round helper |

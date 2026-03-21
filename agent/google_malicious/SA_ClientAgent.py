@@ -109,7 +109,6 @@ class SA_ClientAgent(Agent):
         # Iteration counter.
         self.current_iteration = 1
         self.current_base = 0
-        
 
     # Simulation lifecycle messages.
 
@@ -121,13 +120,17 @@ class SA_ClientAgent(Agent):
             self.kernel.custom_state['clt_adkey'] = pd.Timedelta(0)
             self.kernel.custom_state['clt_graph'] = pd.Timedelta(0)
             self.kernel.custom_state['clt_share'] = pd.Timedelta(0)
-            
+
             self.kernel.custom_state['clt_collection'] = pd.Timedelta(0)
             self.kernel.custom_state['clt_crosscheck'] = pd.Timedelta(0)
             self.kernel.custom_state['clt_reconstruction'] = pd.Timedelta(0)
 
         # Find the PPFL service agent, so messages can be directed there.
         self.serviceAgentID = self.kernel.findAgentByType(ServiceAgent)
+
+        # Zero out computation delay so client processing does not affect simulation time.
+        # (Matches Flamingo client behavior for fair comparison.)
+        self.setComputationDelay(0)
 
         # Request a wake-up call as in the base Agent.  Noise is kept small because
         # the overall protocol duration is so short right now.  (up to one microsecond)

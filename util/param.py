@@ -23,7 +23,7 @@ wt_google_graph = pd.Timedelta('10s')
 wt_google_share = pd.Timedelta('30s')    # ensure all user_choice received messages
 wt_google_collection = pd.Timedelta('10s')
 wt_google_crosscheck = pd.Timedelta('3s')
-wt_google_recontruction = pd.Timedelta('2s') 
+wt_google_reconstruction = pd.Timedelta('2s') 
 
 # WARNING: 
 # this should be a random seed from beacon service;

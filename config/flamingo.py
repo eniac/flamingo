@@ -288,5 +288,15 @@ print ()
 # Print detailed benchmark summary
 from util.benchmark import bench
 bench.print_summary(num_clients=num_clients, committee_size=param.committee_size)
+bench.set_params(
+    protocol="flamingo",
+    num_clients=num_clients,
+    num_iterations=num_iterations,
+    vector_len=param.vector_len,
+    wait_mode=wait_mode,
+    wait_threshold=wait_threshold,
+    seed=seed,
+    committee_size=param.committee_size,
+)
 bench.save_timeline_csv("timeline_flamingo.csv")
 

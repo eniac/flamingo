@@ -84,7 +84,7 @@ Flamingo has 3 rounds per iteration (after initialization). In adaptive mode, **
 | Round | Name | Fixed Timeout | Adaptive Trigger |
 |-------|------|---------------|------------------|
 | 1 | `report` | 10s | `wait_threshold` of `num_clients` vectors received (default 90%) |
-| 2 | `crosscheck` | 3s | `wait_threshold` of committee signatures received (default 90%) |
+| 2 | `crosscheck` | 3s | 2/3 of committee signatures received |
 | 3 | `reconstruction` | 3s | `committee_threshold` decryption shares received (determined by protocol parameters) |
 
 Round 3 uses a hard threshold (`committee_threshold`) derived from the committee size and secret-sharing fraction, not the configurable `wait_threshold`.
@@ -168,6 +168,65 @@ The suite automatically validates correctness by checking that aggregated sums a
 
 - **`benchmark_results.csv`** — Raw results for all runs, including server/client timings, communication costs, and online client counts.
 - **Summary table** — Printed to stdout with columns for protocol, client count, vector length, iterations, wait mode, wall-clock time, server/client step timings, communication bytes, and correctness.
+
+## Timeline Analysis
+
+Each experiment run produces a `timeline_<protocol>.csv` file recording per-iteration events with timestamps. The `analyze_timeline.py` script parses these CSVs and prints per-round wait times, server computation time, and total iteration time.
+
+### Usage
+
+```bash
+# Analyze a single file
+python analyze_timeline.py timeline_flamingo.csv
+
+# Compare two protocols side-by-side
+python analyze_timeline.py timeline_flamingo.csv timeline_google_malicious.csv
+
+# Compare across client counts
+python analyze_timeline.py timeline_flamingo_128.csv timeline_flamingo_256.csv timeline_flamingo_512.csv
+```
+
+### Example Output (n=512, adaptive mode, threshold=0.9)
+
+**Flamingo** (3 rounds per iteration):
+
+| Iter | Report Wait | CC Wait | Recon Wait | Srv Comp | Total |
+|------|------------|---------|------------|----------|-------|
+| 1 | 4.951s | 0.213s | 0.203s | 5.054s | 10.42s |
+| 2 | 5.984s | 0.397s | 0.155s | 4.949s | 11.49s |
+| 3 | 5.055s | 0.311s | 0.184s | 4.784s | 10.33s |
+| 4 | 5.586s | 0.766s | 0.207s | 4.729s | 11.29s |
+| **AVG** | **5.394s** | **0.422s** | **0.187s** | **4.879s** | **10.88s** |
+
+**Google Malicious** (6 rounds per iteration):
+
+| Iter | R1 adkey | R2 graph | R3 share | R4 coll | R5 alive | R6 recon | Srv Comp | Total |
+|------|---------|---------|---------|---------|---------|---------|----------|-------|
+| 1 | 3.000s | 10.000s | 29.982s | 1.626s | 2.998s | 1.996s | 2.409s | 52.01s |
+| 2 | 10.000s | 10.000s | 14.234s | 1.731s | 2.997s | 1.995s | 2.475s | 43.43s |
+| 3 | 10.000s | 10.000s | 21.608s | 1.721s | 2.998s | 1.995s | 2.661s | 50.98s |
+| 4 | 10.000s | 10.000s | 16.333s | 1.595s | 2.998s | 1.995s | 2.608s | 45.53s |
+| **AVG** | **8.250s** | **10.000s** | **20.539s** | **1.668s** | **2.998s** | **1.995s** | **2.538s** | **47.99s** |
+
+(Benchmarked on a laptop, server compute time is much slower than standard case)
+
+**Speedup: 4.4x** (Google 47.99s vs Flamingo 10.88s)
+
+### Column Definitions
+
+- **Report/Round Wait** — Time from round start until the server begins processing (i.e., network wait for sufficient messages).
+- **Srv Comp** — Total server-side computation across all rounds (processing received messages).
+- **Total** — End-to-end time per iteration (sum of all waits + server computation).
+
+### Using AI Agents for Analysis
+
+The timeline CSV files contain detailed per-event timestamps that are well-suited for deeper analysis with AI coding agents (e.g., Claude Code, Cursor, GitHub Copilot). Example prompts:
+
+- *"Read timeline_flamingo_512.csv and explain why iteration 2 was slower than iteration 3."*
+- *"Compare the wait time distributions across these timeline CSVs and plot a chart."*
+- *"What is the 90th percentile network latency implied by the report wait times?"*
+
+The CSV schema is simple: `iteration, simtime, offset_s, event` — any tool that reads CSV can process it.
 
 ## Additional Information
 The server waiting time is set in `util/param.py` according to a target dropout rate (1%).

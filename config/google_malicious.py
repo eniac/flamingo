@@ -313,5 +313,15 @@ print ()
 # Print timeline view
 from util.benchmark import bench
 bench.print_timeline()
+bench.set_params(
+    protocol="google_malicious",
+    num_clients=num_clients,
+    num_iterations=num_iterations,
+    vector_len=param.vector_len,
+    wait_mode=wait_mode,
+    wait_threshold=wait_threshold,
+    seed=seed,
+    num_neighbors=num_neighbors,
+)
 bench.save_timeline_csv("timeline_google_malicious.csv")
 

@@ -771,7 +771,7 @@ class SA_ServiceAgent(Agent):
             self.logger.info(f"Server forward ACK comm: {len(dill.dumps(in_neighbors_ack))}")
             self.logger.info(f"Server comm for requesting shares: {len(dill.dumps(request_ai_shares)) + len(dill.dumps(request_mi_shares))}")
 
-        self._next_round(currentTime, 6, server_comp_delay, param.wt_google_recontruction)
+        self._next_round(currentTime, 6, server_comp_delay, param.wt_google_reconstruction)
 
     def reconstruction_read_from_pool(self):
         self.recon_shares_mi = self.recv_recon_shares_mi

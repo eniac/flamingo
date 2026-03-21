@@ -19,6 +19,9 @@ class BenchmarkCollector:
     """
 
     def __init__(self):
+        # Experiment parameters (set via set_params before saving)
+        self.params = {}
+
         # {iteration -> {step -> {sub_operation -> total_seconds}}}
         self.timers = defaultdict(lambda: defaultdict(lambda: defaultdict(float)))
         # {iteration -> {step -> {sub_operation -> count}}}
@@ -227,9 +230,14 @@ class BenchmarkCollector:
 
         print("=" * 80)
 
+    def set_params(self, **kwargs):
+        """Store experiment parameters to be saved in timeline CSV header."""
+        self.params.update(kwargs)
+
     def save_timeline_csv(self, filepath="timeline.csv"):
         """Save the timeline to a CSV file for later analysis.
 
+        The first line is a JSON comment with experiment parameters.
         Columns: iteration, simtime, offset_s, event
         """
         import csv
@@ -276,6 +284,9 @@ class BenchmarkCollector:
         rows.sort(key=lambda r: (r[0], r[2]))
 
         with open(filepath, 'w', newline='') as f:
+            # Write params as a JSON comment line so the CSV is still parseable
+            if self.params:
+                f.write(f"# {json.dumps(self.params)}\n")
             writer = csv.writer(f)
             writer.writerow(["iteration", "simtime", "offset_s", "event"])
             writer.writerows(rows)
